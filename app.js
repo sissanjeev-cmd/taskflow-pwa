@@ -46,12 +46,27 @@ let unsubFS       = null;
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
 
+// When Firebase is not configured, fall back to localStorage (no auth required)
+const useLocal = !isConfigured || !firebaseReady;
+
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
-  if (!isConfigured) { showSetupScreen(); return; }
-  if (!firebaseReady) { showError('Firebase failed to initialise.'); return; }
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
 
-  // Handle OAuth redirect result (will be non-null once after Google login)
+  if (useLocal) {
+    // ── Local mode: localStorage, no auth required ────────────────────────
+    try { tasks = JSON.parse(localStorage.getItem('taskflow-tasks') || '[]'); } catch { tasks = []; }
+    let changed = false;
+    tasks = tasks.map(t => { if (!t.color) { changed = true; return { ...t, color: nextColor() }; } return t; });
+    if (changed) persistLocal();
+    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    buildApp();
+    startAlarmChecker();
+    return;
+  }
+
+  // ── Firebase mode ────────────────────────────────────────────────────────
   try { await getRedirectResult(auth); } catch (e) { console.error(e); }
 
   onAuthStateChanged(auth, user => {
@@ -64,9 +79,10 @@ async function init() {
       showAuthScreen();
     }
   });
+}
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+function persistLocal() {
+  localStorage.setItem('taskflow-tasks', JSON.stringify(tasks));
 }
 
 // ── Auth screens ───────────────────────────────────────────────────────────
@@ -135,22 +151,38 @@ function stopFirestoreSync() {
   tasks = [];
 }
 
-// ── Firestore CRUD ─────────────────────────────────────────────────────────
+// ── CRUD — works for both local and Firestore mode ─────────────────────────
 async function saveTask(t) {
-  if (!currentUser) return;
-  await setDoc(doc(db, 'users', currentUser.uid, 'tasks', t.id), t);
+  if (useLocal) {
+    const idx = tasks.findIndex(x => x.id === t.id);
+    if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
+    persistLocal(); render();
+  } else {
+    if (!currentUser) return;
+    await setDoc(doc(db, 'users', currentUser.uid, 'tasks', t.id), t);
+  }
 }
 
 async function removeTask(id) {
-  if (!currentUser) return;
-  await deleteDoc(doc(db, 'users', currentUser.uid, 'tasks', id));
+  if (useLocal) {
+    tasks = tasks.filter(x => x.id !== id);
+    persistLocal(); render();
+  } else {
+    if (!currentUser) return;
+    await deleteDoc(doc(db, 'users', currentUser.uid, 'tasks', id));
+  }
 }
 
 async function clearCompleted() {
-  if (!currentUser) return;
-  const batch = writeBatch(db);
-  tasks.filter(t => t.completed).forEach(t => batch.delete(doc(db, 'users', currentUser.uid, 'tasks', t.id)));
-  await batch.commit();
+  if (useLocal) {
+    tasks = tasks.filter(t => !t.completed);
+    persistLocal(); render();
+  } else {
+    if (!currentUser) return;
+    const batch = writeBatch(db);
+    tasks.filter(t => t.completed).forEach(t => batch.delete(doc(db, 'users', currentUser.uid, 'tasks', t.id)));
+    await batch.commit();
+  }
 }
 
 // ── Alarm checker ──────────────────────────────────────────────────────────
@@ -229,7 +261,7 @@ function formatDue(dueDate, dueTime) {
 // ── Build app UI ───────────────────────────────────────────────────────────
 function buildApp() {
   const u  = currentUser;
-  const av = (u?.displayName || u?.email || '?')[0].toUpperCase();
+  const av = u ? (u.displayName || u.email || '?')[0].toUpperCase() : null;
 
   app.innerHTML = `
     <div id="titlebar">
@@ -240,10 +272,7 @@ function buildApp() {
           <div class="logo-sub">Todo &amp; Reminders</div>
         </div>
       </div>
-      <div class="user-area">
-        <div class="user-avatar" title="${escHtml(u?.displayName || u?.email || '')}">${av}</div>
-        <button class="btn-signout" id="btn-signout">Sign out</button>
-      </div>
+      ${av ? `<div class="user-area"><div class="user-avatar" title="${escHtml(u.displayName || u.email || '')}">${av}</div><button class="btn-signout" id="btn-signout">Sign out</button></div>` : ''}
     </div>
 
     <div id="add-bar">
@@ -305,7 +334,7 @@ function buildApp() {
       </div>
     </div>`;
 
-  $('btn-signout').addEventListener('click', () => signOut(auth).catch(console.error));
+  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth).catch(console.error));
   $('quick-input').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.value.trim()) { addQuick(e.target.value.trim()); e.target.value = ''; } });
   $('btn-add-full').addEventListener('click', () => openModal(null));
   $('search-input').addEventListener('input', e => { search = e.target.value; render(); });
@@ -330,7 +359,7 @@ function buildApp() {
     $('m-reminder').className = 'toggle-switch ' + (modalReminder ? 'on' : 'off');
   });
 
-  startAlarmChecker();
+  render();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────────
