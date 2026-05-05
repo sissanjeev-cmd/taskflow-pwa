@@ -1,6 +1,7 @@
 import { initializeApp }     from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
-         getRedirectResult, signOut, onAuthStateChanged }
+         getRedirectResult, setPersistence, browserLocalPersistence,
+         signOut, onAuthStateChanged }
                              from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy }
                              from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
@@ -22,23 +23,39 @@ function hexToRgb(hex) {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
-let currentUser   = null;
-let tasks         = [];
-let filter        = 'all';
-let search        = '';
-let blinkingIds   = new Set();
-let alarmFiredIds = new Set();
-let modalPriority = 'medium';
-let modalReminder = true;
-let editingId     = null;
-let unsubSnapshot = null;
+let currentUser    = null;
+let tasks          = [];
+let filter         = 'all';
+let search         = '';
+let blinkingIds    = new Set();
+let alarmFiredIds  = new Set();
+let modalPriority  = 'medium';
+let modalReminder  = true;
+let editingId      = null;
+let unsubSnapshot  = null;
+let alarmBeepId    = null;
+let pendingAlarms  = [];
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
 
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // When a new SW takes over, reload immediately to get fresh files
+    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
+    navigator.serviceWorker.register('./sw.js').then(reg => {
+      // If a new SW is already waiting, tell it to take over now
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        sw.addEventListener('statechange', () => {
+          if (sw.state === 'installed' && navigator.serviceWorker.controller)
+            sw.postMessage({ type: 'SKIP_WAITING' });
+        });
+      });
+    }).catch(() => {});
+  }
 
   app.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100dvh;color:rgba(255,255,255,0.5);font-size:16px;">Loading…</div>';
 
@@ -107,13 +124,20 @@ function showAuthScreen() {
 
   $('btn-signin').addEventListener('click', async () => {
     const errEl = $('auth-err');
+    errEl.textContent = 'Opening Google sign-in…';
     try {
+      await setPersistence(auth, browserLocalPersistence);
       const provider = new GoogleAuthProvider();
       provider.setCustomParameters({ prompt: 'select_account' });
-      // Use redirect on mobile (more reliable on iOS Safari)
-      await signInWithRedirect(auth, provider);
+      await signInWithPopup(auth, provider);
     } catch (e) {
-      errEl.textContent = 'Sign-in failed: ' + (e.code || e.message);
+      if (e.code === 'auth/popup-blocked') {
+        errEl.textContent = 'Popup blocked. In Safari: Settings → Safari → turn off "Block Pop-ups", then retry.';
+      } else if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') {
+        errEl.textContent = e.code || e.message;
+      } else {
+        errEl.textContent = '';
+      }
     }
   });
 }
@@ -173,8 +197,7 @@ function startAlarmChecker() {
       if (t.completed || !t.reminderEnabled || !t.dueDate || alarmFiredIds.has(t.id) || t.alarmTriggered) return;
       if (new Date(t.dueDate + (t.dueTime ? 'T'+t.dueTime : 'T00:00')) <= now) {
         alarmFiredIds.add(t.id); blinkingIds.add(t.id); t.alarmTriggered = true; changed = true;
-        playAlarm();
-        if (Notification.permission === 'granted') new Notification('⏰ TaskFlow Reminder', { body: t.title, icon: './icon-192.png' });
+        fireAlarm(t);
         saveTask(t);
       }
     });
@@ -183,20 +206,77 @@ function startAlarmChecker() {
   check(); setInterval(check, 30000);
 }
 
-function playAlarm() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0,0.38,0.76].forEach(offset => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination); o.type = 'sine';
-      o.frequency.setValueAtTime(880, ctx.currentTime+offset);
-      o.frequency.linearRampToValueAtTime(660, ctx.currentTime+offset+0.18);
-      g.gain.setValueAtTime(0, ctx.currentTime+offset);
-      g.gain.linearRampToValueAtTime(0.35, ctx.currentTime+offset+0.03);
-      g.gain.linearRampToValueAtTime(0, ctx.currentTime+offset+0.32);
-      o.start(ctx.currentTime+offset); o.stop(ctx.currentTime+offset+0.35);
-    });
-  } catch(e) {}
+function fireAlarm(t) {
+  if (Notification.permission === 'granted')
+    new Notification('⏰ TaskFlow Reminder', { body: t.title, icon: './icon-192.png' });
+  pendingAlarms.push(t.id);
+  startContinuousBeep();
+  if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
+}
+
+function startContinuousBeep() {
+  if (alarmBeepId) return;
+  const beep = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([off, freq]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'square'; o.frequency.value = freq;
+        g.gain.setValueAtTime(0, ctx.currentTime+off);
+        g.gain.linearRampToValueAtTime(0.7, ctx.currentTime+off+0.01);
+        g.gain.setValueAtTime(0.7, ctx.currentTime+off+0.16);
+        g.gain.linearRampToValueAtTime(0, ctx.currentTime+off+0.20);
+        o.start(ctx.currentTime+off); o.stop(ctx.currentTime+off+0.21);
+      });
+      setTimeout(() => ctx.close().catch(()=>{}), 1500);
+    } catch(e) {}
+  };
+  beep();
+  alarmBeepId = setInterval(beep, 2200);
+}
+
+function stopContinuousBeep() {
+  if (alarmBeepId) { clearInterval(alarmBeepId); alarmBeepId = null; }
+}
+
+function showAlarmOverlay() {
+  const taskId = pendingAlarms.shift();
+  if (!taskId) { stopContinuousBeep(); return; }
+  const t = tasks.find(x => x.id === taskId);
+  if (!t) { showAlarmOverlay(); return; }
+
+  const ov = document.createElement('div');
+  ov.id = 'alarm-overlay';
+  ov.innerHTML = `
+    <div class="alarm-box">
+      <div class="alarm-icon">⏰</div>
+      <div class="alarm-heading">Time's Up!</div>
+      <div class="alarm-task-name">${escHtml(t.title)}</div>
+      <div class="alarm-actions">
+        <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
+        <button class="alarm-btn alarm-stop"   id="alarm-stop">🛑 Stop Alarm</button>
+      </div>
+    </div>`;
+  document.getElementById('app').appendChild(ov);
+
+  document.getElementById('alarm-snooze').onclick = () => {
+    const task = tasks.find(x => x.id === taskId);
+    if (task) {
+      const at = new Date(Date.now() + 5*60*1000);
+      const dd = at.toISOString().split('T')[0];
+      const dt = at.getHours().toString().padStart(2,'0')+':'+at.getMinutes().toString().padStart(2,'0');
+      blinkingIds.delete(taskId); alarmFiredIds.delete(taskId);
+      saveTask({...task, dueDate:dd, dueTime:dt, alarmTriggered:false});
+    }
+    ov.remove(); showAlarmOverlay();
+  };
+
+  document.getElementById('alarm-stop').onclick = () => {
+    const task = tasks.find(x => x.id === taskId);
+    if (task) { blinkingIds.delete(taskId); saveTask({...task, alarmTriggered:true}); }
+    ov.remove(); showAlarmOverlay();
+  };
 }
 
 // ── Derived data ───────────────────────────────────────────────────────────
@@ -245,7 +325,7 @@ function buildApp() {
       ${av ? `<div class="user-area">
         <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
         <button class="btn-signout" id="btn-signout">Sign out</button>
-      </div>` : ''}
+      </div>` : `<button class="btn-google-signin btn-signin-small" id="btn-signin-header">Sign In</button>`}
     </div>
     <div id="add-bar">
       <input class="glass-input" id="quick-input" placeholder="Add a task… (tap + for details)" />
@@ -299,6 +379,13 @@ function buildApp() {
     </div>`;
 
   if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
+  if ($('btn-signin-header')) $('btn-signin-header').addEventListener('click', async () => {
+    if (!auth) { showAuthScreen(); return; }
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    await signInWithPopup(auth, provider).catch(() => {});
+  });
   $('quick-input').addEventListener('keydown', e => { if (e.key==='Enter'&&e.target.value.trim()) { addQuick(e.target.value.trim()); e.target.value=''; } });
   $('btn-add-full').addEventListener('click', () => openModal(null));
   $('search-input').addEventListener('input', e => { search=e.target.value; render(); });
@@ -345,7 +432,18 @@ function render() {
   list.querySelectorAll('[data-toggle]').forEach(el=>el.addEventListener('click',()=>toggleTask(el.dataset.toggle)));
   list.querySelectorAll('[data-edit]').forEach(el=>el.addEventListener('click',()=>openModal(el.dataset.edit)));
   list.querySelectorAll('[data-delete]').forEach(el=>el.addEventListener('click',()=>deleteTask(el.dataset.delete)));
-  list.querySelectorAll('[data-dismiss]').forEach(el=>el.addEventListener('click',()=>{ blinkingIds.delete(el.dataset.dismiss); render(); }));
+  list.querySelectorAll('[data-snooze]').forEach(el=>el.addEventListener('click',()=>{
+    const id=el.dataset.snooze, t=tasks.find(x=>x.id===id); if(!t) return;
+    const at=new Date(Date.now()+5*60*1000);
+    const dd=at.toISOString().split('T')[0];
+    const dt=at.getHours().toString().padStart(2,'0')+':'+at.getMinutes().toString().padStart(2,'0');
+    blinkingIds.delete(id); alarmFiredIds.delete(id);
+    saveTask({...t, dueDate:dd, dueTime:dt, alarmTriggered:false});
+  }));
+  list.querySelectorAll('[data-stop]').forEach(el=>el.addEventListener('click',()=>{
+    const id=el.dataset.stop, t=tasks.find(x=>x.id===id); if(!t) return;
+    blinkingIds.delete(id); saveTask({...t, alarmTriggered:true});
+  }));
 }
 
 function renderCard(t) {
@@ -366,8 +464,7 @@ function renderCard(t) {
             ${due?`<span class="due-label ${dC}">🕐 ${due.label}${due.isOverdue&&!t.completed?' <span class="badge badge-overdue">Overdue</span>':''}${due.isSoon&&!due.isOverdue&&!t.completed?' <span class="badge badge-soon">Soon</span>':''}</span>`:''}
             ${t.reminderEnabled&&!t.completed?`<span style="color:rgba(255,255,255,0.30);font-size:12px">🔔</span>`:''}
           </div>
-          ${isB?`<div class="alarm-banner"><span class="alarm-text">⏰ Reminder! Task is due</span><button class="alarm-dismiss" data-dismiss="${t.id}">Dismiss</button></div>`:''}
-        </div>
+          ${isB?`<div class="alarm-banner"><span class="alarm-text">⏰ Alarm active</span><button class="alarm-dismiss" data-snooze="${t.id}">😴 5min</button><button class="alarm-dismiss alarm-stop-inline" data-stop="${t.id}">🛑 Stop</button></div>`:''}        </div>
         <div class="card-actions">
           <button class="card-btn" data-edit="${t.id}">✏️</button>
           <button class="card-btn del" data-delete="${t.id}">🗑</button>

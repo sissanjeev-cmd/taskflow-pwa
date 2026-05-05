@@ -14,7 +14,37 @@ body {
   height: 100dvh;
   background: rgba(20, 10, 50, 0.98);
   overflow: hidden;
+  position: relative;
 }
+
+/* ── Alarm overlay ── */
+#alarm-overlay {
+  position: absolute; inset: 0; z-index: 999;
+  background: rgba(10,0,20,0.93);
+  display: flex; align-items: center; justify-content: center;
+  animation: alarm-fade-in 0.25s ease;
+}
+@keyframes alarm-fade-in { from { opacity:0; transform:scale(1.04); } to { opacity:1; transform:scale(1); } }
+.alarm-box {
+  text-align: center; padding: 36px 28px;
+  background: rgba(255,30,80,0.15);
+  border: 2px solid rgba(255,60,100,0.5);
+  border-radius: 24px; max-width: 320px; width: 88%;
+}
+.alarm-icon { font-size: 64px; animation: alarm-shake 0.5s infinite alternate; display: block; margin-bottom: 12px; }
+@keyframes alarm-shake { from { transform: rotate(-12deg) scale(1.1); } to { transform: rotate(12deg) scale(1.1); } }
+.alarm-heading { font-size: 28px; font-weight: 800; color: #ff4d6d; letter-spacing: -0.5px; margin-bottom: 8px; }
+.alarm-task-name { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 28px; line-height: 1.4; }
+.alarm-actions { display: flex; flex-direction: column; gap: 12px; }
+.alarm-btn {
+  width: 100%; padding: 16px; border: none; border-radius: 14px;
+  font-size: 17px; font-weight: 700; cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s;
+}
+.alarm-btn:active { transform: scale(0.97); }
+.alarm-snooze { background: #6366f1; color: #fff; }
+.alarm-stop   { background: #ef4444; color: #fff; }
 
 /* ── Title bar ── */
 #titlebar {
@@ -203,21 +233,23 @@ body {
 .card-btn:active { background: rgba(255,255,255,0.18); }
 .card-btn.del:active { background: rgba(239,68,68,0.3); color: #fca5a5; }
 
-/* Alarm banner */
+/* Alarm banner (inline on card) */
 .alarm-banner {
   margin-top: 8px;
-  background: linear-gradient(135deg, rgba(255,107,53,0.22), rgba(247,147,30,0.14));
-  border: 1px solid rgba(255,107,53,0.45);
+  background: linear-gradient(135deg, rgba(255,60,80,0.22), rgba(239,68,68,0.14));
+  border: 1px solid rgba(255,60,80,0.45);
   border-radius: 10px;
-  padding: 7px 12px;
-  display: flex; align-items: center; justify-content: space-between;
+  padding: 7px 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
 }
-.alarm-text { color: #ffb399; font-size: 12px; font-weight: 600; }
+.alarm-text { color: #ffa0b0; font-size: 12px; font-weight: 600; flex: 1; }
 .alarm-dismiss {
-  color: #ff9a6c; font-size: 11px; cursor: pointer;
-  background: none; border: none; text-decoration: underline; font-family: inherit;
-  padding: 4px 0;
+  font-size: 11px; font-weight: 700; cursor: pointer; font-family: inherit;
+  padding: 4px 10px; border: none; border-radius: 7px;
+  -webkit-tap-highlight-color: transparent;
 }
+.alarm-dismiss { background: rgba(99,102,241,0.8); color: #fff; }
+.alarm-stop-inline { background: rgba(239,68,68,0.8) !important; }
 
 /* ── Bottom bar ── */
 #bottom-bar {
@@ -352,6 +384,11 @@ body {
   margin-bottom: 16px;
 }
 .btn-google-signin:active { transform: scale(0.98); box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+.btn-signin-small {
+  width: auto; padding: 8px 16px; font-size: 14px; font-weight: 700;
+  border-radius: 10px; margin-bottom: 0;
+}
+.auth-error { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
 .auth-note { color: rgba(255,255,255,0.30); font-size: 13px; line-height: 1.5; }
 
 /* ── User area (header) ── */

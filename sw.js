@@ -1,4 +1,4 @@
-const CACHE = 'taskflow-v5';
+const CACHE = 'taskflow-v9';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -11,6 +11,10 @@ self.addEventListener('activate', e => {
     Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
   ));
   self.clients.claim();
+});
+
+self.addEventListener('message', e => {
+  if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('fetch', e => {
