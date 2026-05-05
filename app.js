@@ -1,10 +1,17 @@
-import { createClient }         from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from './supabase-config.js';
+import { initializeApp }     from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+         getRedirectResult, signOut, onAuthStateChanged }
+                             from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, query, orderBy }
+                             from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { firebaseConfig }    from './firebase-config.js';
 
-// ── Supabase init ──────────────────────────────────────────────────────────
-const isConfigured = !SUPABASE_URL.startsWith('REPLACE');
-const supabase     = isConfigured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-const useLocal     = !isConfigured;
+// ── Firebase init ──────────────────────────────────────────────────────────
+const isConfigured = !firebaseConfig.apiKey.startsWith('REPLACE');
+const fbApp  = isConfigured ? initializeApp(firebaseConfig) : null;
+const auth   = isConfigured ? getAuth(fbApp)      : null;
+const db     = isConfigured ? getFirestore(fbApp) : null;
+const useLocal = !isConfigured;
 
 // ── Colours ────────────────────────────────────────────────────────────────
 const TASK_COLORS = ['#60a5fa','#a78bfa','#f472b6','#4ade80','#fbbf24','#22d3ee','#2dd4bf','#fb7185','#818cf8','#fb923c'];
@@ -12,19 +19,6 @@ let colorIndex = 0;
 function nextColor() { return TASK_COLORS[colorIndex++ % TASK_COLORS.length]; }
 function hexToRgb(hex) {
   return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
-}
-
-// ── DB ↔ app mapping ───────────────────────────────────────────────────────
-function toDb(t, userId) {
-  return { id: t.id, user_id: userId, title: t.title, description: t.description || '',
-    priority: t.priority, completed: t.completed, created_at: t.createdAt || 0,
-    due_date: t.dueDate || '', due_time: t.dueTime || '',
-    reminder_enabled: t.reminderEnabled, alarm_triggered: t.alarmTriggered, color: t.color || '#60a5fa' };
-}
-function fromDb(r) {
-  return { id: r.id, title: r.title, description: r.description, priority: r.priority,
-    completed: r.completed, createdAt: r.created_at, dueDate: r.due_date, dueTime: r.due_time,
-    reminderEnabled: r.reminder_enabled, alarmTriggered: r.alarm_triggered, color: r.color };
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -37,7 +31,7 @@ let alarmFiredIds = new Set();
 let modalPriority = 'medium';
 let modalReminder = true;
 let editingId     = null;
-let realtimeChannel = null;
+let unsubSnapshot = null;
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
@@ -45,7 +39,8 @@ const app = document.getElementById('app');
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+
+  app.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100dvh;color:rgba(255,255,255,0.5);font-size:16px;">Loading…</div>';
 
   if (useLocal) {
     try { tasks = JSON.parse(localStorage.getItem('taskflow-tasks') || '[]'); } catch { tasks = []; }
@@ -58,29 +53,43 @@ async function init() {
     return;
   }
 
-  // ── Supabase auth flow ────────────────────────────────────────────────────
-  supabase.auth.onAuthStateChange(async (event, session) => {
-    currentUser = session?.user ?? null;
-    if (currentUser) {
-      await loadTasks();
-      buildApp();
-      startRealtimeSync();
-      startAlarmChecker();
-    } else {
-      stopRealtimeSync();
-      tasks = [];
-      showAuthScreen();
+  // Await redirect result first so auth state is settled
+  try {
+    await getRedirectResult(auth);
+  } catch (e) {
+    console.error('Redirect result:', e.code, e.message);
+    // auth state listener will still fire correctly
+  }
+
+  // ── Firebase auth ──────────────────────────────────────────────────────
+  onAuthStateChanged(auth, async user => {
+    try {
+      currentUser = user;
+      if (user) {
+        buildApp();
+        startRealtimeSync();
+        startAlarmChecker();
+      } else {
+        stopRealtimeSync();
+        tasks = [];
+        showAuthScreen();
+      }
+    } catch (e) {
+      app.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100dvh;color:#f87171;font-size:14px;padding:20px;text-align:center;">Error: ${e.message}</div>`;
     }
   });
-
-  // Trigger initial check (handles redirect callback too)
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) showAuthScreen();
 }
 
 function persistLocal() { localStorage.setItem('taskflow-tasks', JSON.stringify(tasks)); }
 
 // ── Auth screen ────────────────────────────────────────────────────────────
+const googleSvg = `<svg width="20" height="20" viewBox="0 0 18 18" fill="none">
+  <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908C16.658 14.021 17.64 11.712 17.64 9.2z" fill="#4285F4"/>
+  <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
+  <path d="M3.964 10.707A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+  <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
+</svg>`;
+
 function showAuthScreen() {
   app.innerHTML = `
     <div id="auth-screen">
@@ -89,45 +98,43 @@ function showAuthScreen() {
         <h1 class="auth-title">TaskFlow</h1>
         <p class="auth-sub">Your tasks, everywhere</p>
         <button class="btn-google-signin" id="btn-signin">
-          <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-            <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908C16.658 14.021 17.64 11.712 17.64 9.2z" fill="#4285F4"/>
-            <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
-            <path d="M3.964 10.707A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
-            <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
-          </svg>
-          Sign in with Google
+          ${googleSvg} Continue with Google
         </button>
-        <p class="auth-note">Sync your tasks across iPhone, iPad &amp; Mac</p>
+        <p class="auth-error" id="auth-err"></p>
+        <p class="auth-note">Sign in to sync tasks across iPhone &amp; Mac</p>
       </div>
     </div>`;
-  $('btn-signin').addEventListener('click', () => {
-    supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.href }
-    });
+
+  $('btn-signin').addEventListener('click', async () => {
+    const errEl = $('auth-err');
+    try {
+      const provider = new GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      // Use redirect on mobile (more reliable on iOS Safari)
+      await signInWithRedirect(auth, provider);
+    } catch (e) {
+      errEl.textContent = 'Sign-in failed: ' + (e.code || e.message);
+    }
   });
 }
 
-// ── Supabase data ──────────────────────────────────────────────────────────
-async function loadTasks() {
-  const { data, error } = await supabase.from('tasks').select('*')
-    .eq('user_id', currentUser.id).order('created_at', { ascending: false });
-  if (error) { console.error(error); return; }
-  tasks = (data || []).map(fromDb);
-  tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+// ── Firestore data ─────────────────────────────────────────────────────────
+function tasksCol() {
+  return collection(db, 'users', currentUser.uid, 'tasks');
 }
 
 function startRealtimeSync() {
   stopRealtimeSync();
-  realtimeChannel = supabase.channel('tasks-sync')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, async () => {
-      await loadTasks(); render();
-    })
-    .subscribe();
+  const q = query(tasksCol(), orderBy('createdAt', 'desc'));
+  unsubSnapshot = onSnapshot(q, snap => {
+    tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    render();
+  });
 }
 
 function stopRealtimeSync() {
-  if (realtimeChannel) { supabase.removeChannel(realtimeChannel); realtimeChannel = null; }
+  if (unsubSnapshot) { unsubSnapshot(); unsubSnapshot = null; }
 }
 
 // ── CRUD ───────────────────────────────────────────────────────────────────
@@ -137,8 +144,8 @@ async function saveTask(t) {
     if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
     persistLocal(); render();
   } else {
-    const { error } = await supabase.from('tasks').upsert(toDb(t, currentUser.id));
-    if (error) console.error(error);
+    const { id, ...data } = t;
+    await setDoc(doc(tasksCol(), id), data);
   }
 }
 
@@ -146,7 +153,7 @@ async function removeTask(id) {
   if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {
-    await supabase.from('tasks').delete().eq('id', id).eq('user_id', currentUser.id);
+    await deleteDoc(doc(tasksCol(), id));
   }
 }
 
@@ -154,7 +161,7 @@ async function clearCompleted() {
   if (useLocal) {
     tasks = tasks.filter(t => !t.completed); persistLocal(); render();
   } else {
-    await supabase.from('tasks').delete().eq('completed', true).eq('user_id', currentUser.id);
+    tasks.filter(t => t.completed).forEach(t => deleteDoc(doc(tasksCol(), t.id)));
   }
 }
 
@@ -224,15 +231,21 @@ function formatDue(dueDate, dueTime) {
 // ── Build UI ───────────────────────────────────────────────────────────────
 function buildApp() {
   const u  = currentUser;
-  const av = u ? (u.user_metadata?.full_name || u.email || '?')[0].toUpperCase() : null;
+  const av = u ? (u.displayName || u.email || '?')[0].toUpperCase() : null;
 
   app.innerHTML = `
     <div id="titlebar">
       <div class="logo">
         <span class="logo-icon">✅</span>
-        <div><div class="logo-text">TaskFlow</div><div class="logo-sub">Todo &amp; Reminders</div></div>
+        <div>
+          <div class="logo-text">TaskFlow</div>
+          <div class="logo-sub">${u ? escHtml(u.email||'') : 'Todo &amp; Reminders'}</div>
+        </div>
       </div>
-      ${av ? `<div class="user-area"><div class="user-avatar" title="${escHtml(u.user_metadata?.full_name||u.email||'')}">${av}</div><button class="btn-signout" id="btn-signout">Sign out</button></div>` : ''}
+      ${av ? `<div class="user-area">
+        <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
+        <button class="btn-signout" id="btn-signout">Sign out</button>
+      </div>` : ''}
     </div>
     <div id="add-bar">
       <input class="glass-input" id="quick-input" placeholder="Add a task… (tap + for details)" />
@@ -285,7 +298,7 @@ function buildApp() {
       </div>
     </div>`;
 
-  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => supabase.auth.signOut());
+  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
   $('quick-input').addEventListener('keydown', e => { if (e.key==='Enter'&&e.target.value.trim()) { addQuick(e.target.value.trim()); e.target.value=''; } });
   $('btn-add-full').addEventListener('click', () => openModal(null));
   $('search-input').addEventListener('input', e => { search=e.target.value; render(); });

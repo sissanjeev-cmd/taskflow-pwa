@@ -1,5 +1,5 @@
-const CACHE = 'taskflow-v3';
-const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './supabase-config.js', './icon-192.png', './icon-512.png'];
+const CACHE = 'taskflow-v5';
+const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
