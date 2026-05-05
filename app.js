@@ -33,17 +33,17 @@ let modalPriority  = 'medium';
 let modalReminder  = true;
 let editingId      = null;
 let unsubSnapshot  = null;
-let alarmBeepId    = null;
 let pendingAlarms  = [];
 let alarmCtx       = null;
-let alarmNextTime  = 0;
+let alarmSource    = null;
+let alarmBuffer    = null;
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
 
-// Pre-create AudioContext on first touch so alarm audio works without a gesture later
+// Pre-build alarm buffer on first touch so it's ready instantly when alarm fires
 ['touchstart','click'].forEach(ev =>
-  document.addEventListener(ev, () => { if (!alarmCtx) ensureAlarmCtx(); }, { once: true, passive: true })
+  document.addEventListener(ev, () => buildAlarmBuffer(), { once: true, passive: true })
 );
 
 // ── Entry ──────────────────────────────────────────────────────────────────
@@ -221,65 +221,53 @@ function fireAlarm(t) {
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
 }
 
-function ensureAlarmCtx() {
-  if (!alarmCtx || alarmCtx.state === 'closed') {
-    try { alarmCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) { return false; }
-  }
-  if (alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
-  return true;
-}
-
-function scheduleBeepGroup(startTime) {
-  // Four-note alarm pattern: C6, A5, C6, E6
-  [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([off, freq]) => {
-    try {
-      const o = alarmCtx.createOscillator(), g = alarmCtx.createGain();
-      o.connect(g); g.connect(alarmCtx.destination);
-      o.type = 'square'; o.frequency.value = freq;
-      const t = startTime + off;
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.7, t + 0.01);
-      g.gain.setValueAtTime(0.7, t + 0.16);
-      g.gain.linearRampToValueAtTime(0, t + 0.21);
-      o.start(t); o.stop(t + 0.22);
-    } catch(e) {}
+// Build the alarm sound once using OfflineAudioContext (no user gesture needed)
+async function buildAlarmBuffer() {
+  if (alarmBuffer) return alarmBuffer;
+  const rate = 44100, dur = 2.2;
+  const off = new OfflineAudioContext(1, Math.ceil(rate * dur), rate);
+  [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([t, freq]) => {
+    const o = off.createOscillator(), g = off.createGain();
+    o.connect(g); g.connect(off.destination);
+    o.type = 'square'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.6, t + 0.01);
+    g.gain.setValueAtTime(0.6, t + 0.16);
+    g.gain.linearRampToValueAtTime(0, t + 0.21);
+    o.start(t); o.stop(t + 0.22);
   });
+  alarmBuffer = await off.startRendering();
+  return alarmBuffer;
 }
 
-function startContinuousBeep() {
-  if (alarmBeepId) return;
-  if (!ensureAlarmCtx()) return;
-  alarmNextTime = alarmCtx.currentTime + 0.05;
-
-  const pump = () => {
-    // Recreate context if it closed (e.g. iOS killed it)
-    if (!alarmCtx || alarmCtx.state === 'closed') {
-      if (!ensureAlarmCtx()) return;
-      alarmNextTime = alarmCtx.currentTime + 0.05;
-    }
-    if (alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
-
-    // If alarmNextTime has drifted behind (context was suspended then resumed),
-    // jump it forward so the while loop fires immediately
-    if (alarmNextTime < alarmCtx.currentTime) {
-      alarmNextTime = alarmCtx.currentTime + 0.05;
-    }
-
-    // Keep 0.4 s of audio queued ahead at all times
-    while (alarmNextTime < alarmCtx.currentTime + 0.4) {
-      scheduleBeepGroup(alarmNextTime);
-      alarmNextTime += 2.2;
-    }
-  };
-
-  pump();
-  alarmBeepId = setInterval(pump, 200);
+async function startContinuousBeep() {
+  if (alarmSource) return;
+  try {
+    const buf = await buildAlarmBuffer();
+    if (!alarmCtx || alarmCtx.state === 'closed')
+      alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await alarmCtx.resume().catch(() => {});
+    alarmSource = alarmCtx.createBufferSource();
+    alarmSource.buffer = buf;
+    alarmSource.loop = true;               // AudioBufferSourceNode loops natively — no scheduler needed
+    alarmSource.connect(alarmCtx.destination);
+    alarmSource.start(0);
+  } catch(e) { console.error('alarm audio:', e); }
 }
 
 function stopContinuousBeep() {
-  if (alarmBeepId) { clearInterval(alarmBeepId); alarmBeepId = null; }
+  if (alarmSource) {
+    try { alarmSource.stop(0); alarmSource.disconnect(); } catch(e) {}
+    alarmSource = null;
+  }
   if (alarmCtx) { alarmCtx.close().catch(() => {}); alarmCtx = null; }
 }
+
+// Resume alarm if iOS suspends the AudioContext while it's playing
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && alarmSource && alarmCtx?.state === 'suspended')
+    alarmCtx.resume().catch(() => {});
+});
 
 function showAlarmOverlay() {
   const taskId = pendingAlarms.shift();
@@ -305,8 +293,9 @@ function showAlarmOverlay() {
     const task = tasks.find(x => x.id === taskId);
     if (task) {
       const at = new Date(Date.now() + 5*60*1000);
-      const dd = at.toISOString().split('T')[0];
-      const dt = at.getHours().toString().padStart(2,'0')+':'+at.getMinutes().toString().padStart(2,'0');
+      const p = n => n.toString().padStart(2,'0');
+      const dd = `${at.getFullYear()}-${p(at.getMonth()+1)}-${p(at.getDate())}`;
+      const dt = `${p(at.getHours())}:${p(at.getMinutes())}`;
       blinkingIds.delete(taskId); alarmFiredIds.delete(taskId);
       saveTask({...task, dueDate:dd, dueTime:dt, alarmTriggered:false});
     }
