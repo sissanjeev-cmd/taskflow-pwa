@@ -250,15 +250,28 @@ function startContinuousBeep() {
   if (alarmBeepId) return;
   if (!ensureAlarmCtx()) return;
   alarmNextTime = alarmCtx.currentTime + 0.05;
+
   const pump = () => {
-    if (!alarmCtx || alarmCtx.state === 'closed') return;
-    if (alarmCtx.state === 'suspended') { alarmCtx.resume().catch(() => {}); return; }
-    // Schedule 0.4 s ahead so there are never gaps
+    // Recreate context if it closed (e.g. iOS killed it)
+    if (!alarmCtx || alarmCtx.state === 'closed') {
+      if (!ensureAlarmCtx()) return;
+      alarmNextTime = alarmCtx.currentTime + 0.05;
+    }
+    if (alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
+
+    // If alarmNextTime has drifted behind (context was suspended then resumed),
+    // jump it forward so the while loop fires immediately
+    if (alarmNextTime < alarmCtx.currentTime) {
+      alarmNextTime = alarmCtx.currentTime + 0.05;
+    }
+
+    // Keep 0.4 s of audio queued ahead at all times
     while (alarmNextTime < alarmCtx.currentTime + 0.4) {
       scheduleBeepGroup(alarmNextTime);
       alarmNextTime += 2.2;
     }
   };
+
   pump();
   alarmBeepId = setInterval(pump, 200);
 }
