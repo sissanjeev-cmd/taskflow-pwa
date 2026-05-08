@@ -299,6 +299,12 @@ function showAlarmOverlay() {
     </div>`;
   document.getElementById('app').appendChild(ov);
 
+  // First tap on overlay unlocks audio from a real user gesture (iOS requirement)
+  ov.addEventListener('touchstart', () => {
+    _initAudio();
+    if (alarmCtx && alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
+  }, { passive: true });
+
   document.getElementById('alarm-snooze').onclick = () => {
     const task = tasks.find(x => x.id === taskId);
     if (task) {

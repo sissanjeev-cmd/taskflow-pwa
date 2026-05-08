@@ -56,17 +56,18 @@ body {
 /* ── Title bar ── */
 #titlebar {
   background: rgba(210, 0, 120, 0.95);
-  padding: 14px 16px 10px;
-  padding-top: max(14px, env(safe-area-inset-top));
+  padding: 10px 12px 8px;
+  padding-top: max(10px, env(safe-area-inset-top));
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
   flex-shrink: 0;
 }
-.logo { display: flex; align-items: center; gap: 9px; }
-.logo-icon { font-size: 24px; }
-.logo-text { color: #fff; font-size: 22px; font-weight: 800; letter-spacing: -0.5px; text-shadow: 0 1px 6px rgba(0,0,0,0.4); }
-.logo-sub  { color: rgba(255,255,255,0.88); font-size: 13px; font-weight: 500; margin-top: 1px; }
+.logo { display: flex; align-items: center; gap: 7px; min-width: 0; flex-shrink: 1; overflow: hidden; }
+.logo-icon { font-size: 22px; flex-shrink: 0; }
+.logo-text { color: #fff; font-size: 18px; font-weight: 800; letter-spacing: -0.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.logo-sub  { color: rgba(255,255,255,0.88); font-size: 11px; font-weight: 500; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ── Add bar ── */
 #add-bar {
@@ -399,26 +400,26 @@ body {
 .auth-note { color: rgba(255,255,255,0.30); font-size: 13px; line-height: 1.5; }
 
 /* ── Header actions ── */
-.header-actions { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
 .btn-header-icon {
   background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 16px;
-  -webkit-tap-highlight-color: transparent;
+  border-radius: 7px; padding: 4px 7px; cursor: pointer; font-size: 14px;
+  -webkit-tap-highlight-color: transparent; line-height: 1;
 }
 .btn-header-active { background: rgba(99,102,241,0.5) !important; border-color: rgba(99,102,241,0.8) !important; }
 
 /* ── User area (header) ── */
-.user-area { display: flex; align-items: center; gap: 8px; }
+.user-area { display: flex; align-items: center; gap: 5px; }
 .user-avatar {
-  width: 30px; height: 30px; border-radius: 50%;
+  width: 26px; height: 26px; border-radius: 50%;
   background: linear-gradient(135deg, #ff6b35, #f7931e);
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-size: 14px; font-weight: 700; flex-shrink: 0;
+  color: #fff; font-size: 12px; font-weight: 700; flex-shrink: 0;
   border: 2px solid rgba(255,255,255,0.25);
 }
 .btn-signout {
-  color: rgba(255,255,255,0.75); font-size: 12px; font-weight: 600;
+  color: rgba(255,255,255,0.75); font-size: 11px; font-weight: 600;
   background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
-  border-radius: 8px; padding: 5px 10px; cursor: pointer;
+  border-radius: 7px; padding: 4px 8px; cursor: pointer;
   font-family: inherit; -webkit-tap-highlight-color: transparent;
 }
