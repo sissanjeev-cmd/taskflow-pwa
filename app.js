@@ -34,15 +34,11 @@ let modalReminder  = true;
 let editingId      = null;
 let unsubSnapshot  = null;
 let pendingAlarms  = [];
+let alarmCtx       = null;
 let alarmInterval  = null;
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
-
-// Pre-build alarm buffer on first touch so it's ready instantly when alarm fires
-['touchstart','click'].forEach(ev =>
-  document.addEventListener(ev, () => buildAlarmBuffer(), { once: true, passive: true })
-);
 
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -219,38 +215,57 @@ function fireAlarm(t) {
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
 }
 
-function playAlarmBeep() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([t, freq]) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
-      o.type = 'square'; o.frequency.value = freq;
-      g.gain.setValueAtTime(0, ctx.currentTime + t);
-      g.gain.linearRampToValueAtTime(0.6, ctx.currentTime + t + 0.01);
-      g.gain.setValueAtTime(0.6, ctx.currentTime + t + 0.16);
-      g.gain.linearRampToValueAtTime(0, ctx.currentTime + t + 0.21);
-      o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.22);
-    });
-    setTimeout(() => ctx.close().catch(() => {}), 2000);
-  } catch(e) {}
+function _scheduleBeep() {
+  if (!alarmCtx || alarmCtx.state === 'closed') return;
+  if (alarmCtx.state === 'suspended') { alarmCtx.resume().catch(() => {}); return; }
+  const t0 = alarmCtx.currentTime;
+  [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([dt, freq]) => {
+    const o = alarmCtx.createOscillator(), g = alarmCtx.createGain();
+    o.connect(g); g.connect(alarmCtx.destination);
+    o.type = 'square'; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t0+dt);
+    g.gain.linearRampToValueAtTime(0.6, t0+dt+0.01);
+    g.gain.setValueAtTime(0.6, t0+dt+0.16);
+    g.gain.linearRampToValueAtTime(0, t0+dt+0.21);
+    o.start(t0+dt); o.stop(t0+dt+0.22);
+  });
 }
 
-function startContinuousBeep() {
+async function startContinuousBeep() {
   if (alarmInterval) return;
-  playAlarmBeep();
-  alarmInterval = setInterval(playAlarmBeep, 2200);
+  try {
+    alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await alarmCtx.resume().catch(() => {});
+    _scheduleBeep();
+    alarmInterval = setInterval(_scheduleBeep, 2200);
+  } catch(e) {}
 }
 
 function stopContinuousBeep() {
   if (alarmInterval) { clearInterval(alarmInterval); alarmInterval = null; }
+  if (alarmCtx) { alarmCtx.close().catch(() => {}); alarmCtx = null; }
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && alarmCtx && alarmCtx.state === 'suspended')
+    alarmCtx.resume().catch(() => {});
+});
 
 function showAlarmOverlay() {
   const taskId = pendingAlarms.shift();
   if (!taskId) { stopContinuousBeep(); return; }
   const t = tasks.find(x => x.id === taskId);
   if (!t) { showAlarmOverlay(); return; }
+
+  const prioIcon = { high:'🔴', medium:'🟡', low:'🟢' };
+  let metaHtml = '';
+  if (t.priority) metaHtml += `<span class="alarm-meta-prio alarm-prio-${t.priority}">${prioIcon[t.priority]||''} ${t.priority}</span>`;
+  if (t.dueDate) {
+    const due = new Date(t.dueDate + (t.dueTime ? 'T'+t.dueTime : 'T00:00'));
+    const dateStr = due.toLocaleDateString('en-US', { month:'short', day:'numeric' });
+    const timeStr = t.dueTime ? due.toLocaleTimeString('en-US', { hour:'2-digit', minute:'2-digit' }) : '';
+    metaHtml += `<span class="alarm-meta-due">🕐 ${[dateStr, timeStr].filter(Boolean).join(' · ')}</span>`;
+  }
 
   const ov = document.createElement('div');
   ov.id = 'alarm-overlay';
@@ -259,6 +274,7 @@ function showAlarmOverlay() {
       <div class="alarm-icon">⏰</div>
       <div class="alarm-heading">Time's Up!</div>
       <div class="alarm-task-name">${escHtml(t.title)}</div>
+      ${metaHtml ? `<div class="alarm-meta">${metaHtml}</div>` : ''}
       <div class="alarm-actions">
         <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
         <button class="alarm-btn alarm-stop"   id="alarm-stop">🛑 Stop Alarm</button>

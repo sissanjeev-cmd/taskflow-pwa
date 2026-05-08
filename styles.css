@@ -34,7 +34,13 @@ body {
 .alarm-icon { font-size: 64px; animation: alarm-shake 0.5s infinite alternate; display: block; margin-bottom: 12px; }
 @keyframes alarm-shake { from { transform: rotate(-12deg) scale(1.1); } to { transform: rotate(12deg) scale(1.1); } }
 .alarm-heading { font-size: 28px; font-weight: 800; color: #ff4d6d; letter-spacing: -0.5px; margin-bottom: 8px; }
-.alarm-task-name { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 28px; line-height: 1.4; }
+.alarm-task-name { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 12px; line-height: 1.4; }
+.alarm-meta { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 24px; }
+.alarm-meta-prio { font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 20px; }
+.alarm-prio-high   { background: rgba(239,68,68,0.25);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.45); }
+.alarm-prio-medium { background: rgba(251,191,36,0.25); color: #fde68a; border: 1px solid rgba(251,191,36,0.45); }
+.alarm-prio-low    { background: rgba(74,222,128,0.25); color: #86efac; border: 1px solid rgba(74,222,128,0.45); }
+.alarm-meta-due { font-size: 13px; color: rgba(255,255,255,0.65); padding: 4px 10px; background: rgba(255,255,255,0.08); border-radius: 20px; }
 .alarm-actions { display: flex; flex-direction: column; gap: 12px; }
 .alarm-btn {
   width: 100%; padding: 16px; border: none; border-radius: 14px;
