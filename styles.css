@@ -405,6 +405,7 @@ body {
   border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 16px;
   -webkit-tap-highlight-color: transparent;
 }
+.btn-header-active { background: rgba(99,102,241,0.5) !important; border-color: rgba(99,102,241,0.8) !important; }
 
 /* ── User area (header) ── */
 .user-area { display: flex; align-items: center; gap: 8px; }

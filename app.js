@@ -36,6 +36,8 @@ let unsubSnapshot  = null;
 let pendingAlarms  = [];
 let alarmCtx       = null;
 let alarmInterval  = null;
+let wakeLock       = null;
+let isPinned       = false;
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
@@ -232,6 +234,7 @@ function fireAlarm(t) {
 }
 
 function _playBeep() {
+  if (navigator.vibrate) navigator.vibrate([300, 100, 300, 100, 300]);
   if (!alarmCtx || alarmCtx.state === 'closed') { _initAudio(); return; }
   try {
     const now = alarmCtx.currentTime;
@@ -360,6 +363,8 @@ function buildApp() {
         </div>
       </div>
       <div class="header-actions">
+        <button class="btn-header-icon ${isPinned?'btn-header-active':''}" id="btn-pin-pwa" title="Keep screen on">📌</button>
+        <button class="btn-header-icon" id="btn-min-pwa" title="Minimise">🪟</button>
         <button class="btn-header-icon" id="btn-export-pwa" title="Export tasks">📤</button>
         ${av ? `<div class="user-area">
           <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
@@ -419,6 +424,22 @@ function buildApp() {
     </div>`;
 
   if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
+
+  if ($('btn-pin-pwa')) $('btn-pin-pwa').addEventListener('click', async () => {
+    if (!isPinned) {
+      try {
+        wakeLock = await navigator.wakeLock?.request('screen');
+        isPinned = true;
+        $('btn-pin-pwa').classList.add('btn-header-active');
+      } catch(e) {}
+    } else {
+      wakeLock?.release(); wakeLock = null; isPinned = false;
+      $('btn-pin-pwa').classList.remove('btn-header-active');
+    }
+  });
+
+  if ($('btn-min-pwa')) $('btn-min-pwa').addEventListener('click', () => window.blur());
+
   if ($('btn-export-pwa')) $('btn-export-pwa').addEventListener('click', () => {
     const json = JSON.stringify(tasks, null, 2);
     const a = document.createElement('a');
