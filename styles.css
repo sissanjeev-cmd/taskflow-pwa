@@ -34,7 +34,8 @@ body {
 .alarm-icon { font-size: 64px; animation: alarm-shake 0.5s infinite alternate; display: block; margin-bottom: 12px; }
 @keyframes alarm-shake { from { transform: rotate(-12deg) scale(1.1); } to { transform: rotate(12deg) scale(1.1); } }
 .alarm-heading { font-size: 28px; font-weight: 800; color: #ff4d6d; letter-spacing: -0.5px; margin-bottom: 8px; }
-.alarm-task-name { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 12px; line-height: 1.4; }
+.alarm-task-name { font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 6px; line-height: 1.4; }
+.alarm-task-desc { font-size: 13px; color: rgba(255,255,255,0.55); margin-bottom: 12px; line-height: 1.45; }
 .alarm-meta { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 24px; }
 .alarm-meta-prio { font-size: 13px; font-weight: 700; padding: 4px 12px; border-radius: 20px; }
 .alarm-prio-high   { background: rgba(239,68,68,0.25);  color: #fca5a5; border: 1px solid rgba(239,68,68,0.45); }

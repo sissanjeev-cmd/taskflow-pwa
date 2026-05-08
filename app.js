@@ -274,6 +274,7 @@ function showAlarmOverlay() {
       <div class="alarm-icon">⏰</div>
       <div class="alarm-heading">Time's Up!</div>
       <div class="alarm-task-name">${escHtml(t.title)}</div>
+      ${t.description ? `<div class="alarm-task-desc">${escHtml(t.description)}</div>` : ''}
       ${metaHtml ? `<div class="alarm-meta">${metaHtml}</div>` : ''}
       <div class="alarm-actions">
         <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
