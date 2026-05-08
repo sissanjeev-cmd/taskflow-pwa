@@ -1,4 +1,4 @@
-const CACHE = 'taskflow-v11';
+const CACHE = 'taskflow-v12';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {

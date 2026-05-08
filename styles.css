@@ -398,6 +398,14 @@ body {
 .auth-error { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
 .auth-note { color: rgba(255,255,255,0.30); font-size: 13px; line-height: 1.5; }
 
+/* ── Header actions ── */
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.btn-header-icon {
+  background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* ── User area (header) ── */
 .user-area { display: flex; align-items: center; gap: 8px; }
 .user-avatar {

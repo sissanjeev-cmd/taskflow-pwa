@@ -40,15 +40,21 @@ let alarmInterval  = null;
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
 
-// Pre-unlock AudioContext on first interaction so it's ready when alarm fires
-function _ensureCtx() {
-  if (alarmCtx && alarmCtx.state !== 'closed') return alarmCtx;
-  alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-  alarmCtx.resume().catch(() => {});
-  return alarmCtx;
+// Unlock and keep AudioContext alive on first user gesture.
+// A looping silent 1-sample buffer prevents iOS from suspending the context.
+function _initAudio() {
+  if (alarmCtx && alarmCtx.state !== 'closed') return;
+  try {
+    alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+    alarmCtx.resume().catch(() => {});
+    const silent = alarmCtx.createBuffer(1, 1, alarmCtx.sampleRate);
+    const keep   = alarmCtx.createBufferSource();
+    keep.buffer = silent; keep.loop = true;
+    keep.connect(alarmCtx.destination); keep.start(0);
+  } catch(e) {}
 }
-document.addEventListener('touchstart', () => _ensureCtx(), { passive: true });
-document.addEventListener('click',      () => _ensureCtx(), { passive: true });
+document.addEventListener('touchstart', _initAudio, { passive: true });
+document.addEventListener('click',      _initAudio, { passive: true });
 
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -226,21 +232,19 @@ function fireAlarm(t) {
 }
 
 function _playBeep() {
+  if (!alarmCtx || alarmCtx.state === 'closed') { _initAudio(); return; }
   try {
-    const ctx = _ensureCtx();
-    ctx.resume().then(() => {
-      const now = ctx.currentTime;
-      [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([dt, freq]) => {
-        const o = ctx.createOscillator(), g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.type = 'square'; o.frequency.value = freq;
-        g.gain.setValueAtTime(0, now+dt);
-        g.gain.linearRampToValueAtTime(0.6, now+dt+0.01);
-        g.gain.setValueAtTime(0.6, now+dt+0.16);
-        g.gain.linearRampToValueAtTime(0, now+dt+0.21);
-        o.start(now+dt); o.stop(now+dt+0.22);
-      });
-    }).catch(() => {});
+    const now = alarmCtx.currentTime;
+    [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([dt, freq]) => {
+      const o = alarmCtx.createOscillator(), g = alarmCtx.createGain();
+      o.connect(g); g.connect(alarmCtx.destination);
+      o.type = 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(0, now+dt);
+      g.gain.linearRampToValueAtTime(0.6, now+dt+0.01);
+      g.gain.setValueAtTime(0.6, now+dt+0.16);
+      g.gain.linearRampToValueAtTime(0, now+dt+0.21);
+      o.start(now+dt); o.stop(now+dt+0.22);
+    });
   } catch(e) {}
 }
 
@@ -355,10 +359,13 @@ function buildApp() {
           <div class="logo-sub">${u ? escHtml(u.email||'') : 'Todo &amp; Reminders'}</div>
         </div>
       </div>
-      ${av ? `<div class="user-area">
-        <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
-        <button class="btn-signout" id="btn-signout">Sign out</button>
-      </div>` : `<button class="btn-google-signin btn-signin-small" id="btn-signin-header">Sign In</button>`}
+      <div class="header-actions">
+        <button class="btn-header-icon" id="btn-export-pwa" title="Export tasks">📤</button>
+        ${av ? `<div class="user-area">
+          <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
+          <button class="btn-signout" id="btn-signout">Sign out</button>
+        </div>` : `<button class="btn-google-signin btn-signin-small" id="btn-signin-header">Sign In</button>`}
+      </div>
     </div>
     <div id="add-bar">
       <input class="glass-input" id="quick-input" placeholder="Add a task… (tap + for details)" />
@@ -412,6 +419,13 @@ function buildApp() {
     </div>`;
 
   if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
+  if ($('btn-export-pwa')) $('btn-export-pwa').addEventListener('click', () => {
+    const json = JSON.stringify(tasks, null, 2);
+    const a = document.createElement('a');
+    a.href = 'data:application/json,' + encodeURIComponent(json);
+    a.download = 'taskflow-export.json';
+    a.click();
+  });
   if ($('btn-signin-header')) $('btn-signin-header').addEventListener('click', async () => {
     if (!auth) { showAuthScreen(); return; }
     await setPersistence(auth, browserLocalPersistence).catch(() => {});
