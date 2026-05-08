@@ -1,4 +1,4 @@
-const CACHE = 'taskflow-v10';
+const CACHE = 'taskflow-v11';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -17,8 +17,15 @@ self.addEventListener('message', e => {
   if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
+// Network-first: always try to fetch fresh, fall back to cache if offline
 self.addEventListener('fetch', e => {
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request))
+    fetch(e.request)
+      .then(response => {
+        const clone = response.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(e.request))
   );
 });
