@@ -40,16 +40,15 @@ let alarmInterval  = null;
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
 
-// Pre-unlock AudioContext on first user gesture so it's ready when alarm fires
-function _initAudioCtx() {
-  if (alarmCtx && alarmCtx.state !== 'closed') return;
-  try {
-    alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
-  } catch(e) {}
+// Pre-unlock AudioContext on first interaction so it's ready when alarm fires
+function _ensureCtx() {
+  if (alarmCtx && alarmCtx.state !== 'closed') return alarmCtx;
+  alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+  alarmCtx.resume().catch(() => {});
+  return alarmCtx;
 }
-document.addEventListener('touchstart', _initAudioCtx, { passive: true });
-document.addEventListener('click', _initAudioCtx);
+document.addEventListener('touchstart', () => _ensureCtx(), { passive: true });
+document.addEventListener('click',      () => _ensureCtx(), { passive: true });
 
 // ── Entry ──────────────────────────────────────────────────────────────────
 async function init() {
@@ -226,32 +225,29 @@ function fireAlarm(t) {
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
 }
 
-function _scheduleBeep() {
-  if (!alarmCtx || alarmCtx.state === 'closed') return;
-  if (alarmCtx.state === 'suspended') { alarmCtx.resume().catch(() => {}); return; }
-  const t0 = alarmCtx.currentTime;
-  [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([dt, freq]) => {
-    const o = alarmCtx.createOscillator(), g = alarmCtx.createGain();
-    o.connect(g); g.connect(alarmCtx.destination);
-    o.type = 'square'; o.frequency.value = freq;
-    g.gain.setValueAtTime(0, t0+dt);
-    g.gain.linearRampToValueAtTime(0.6, t0+dt+0.01);
-    g.gain.setValueAtTime(0.6, t0+dt+0.16);
-    g.gain.linearRampToValueAtTime(0, t0+dt+0.21);
-    o.start(t0+dt); o.stop(t0+dt+0.22);
-  });
+function _playBeep() {
+  try {
+    const ctx = _ensureCtx();
+    ctx.resume().then(() => {
+      const now = ctx.currentTime;
+      [[0,1047],[0.22,880],[0.44,1047],[0.66,1319]].forEach(([dt, freq]) => {
+        const o = ctx.createOscillator(), g = ctx.createGain();
+        o.connect(g); g.connect(ctx.destination);
+        o.type = 'square'; o.frequency.value = freq;
+        g.gain.setValueAtTime(0, now+dt);
+        g.gain.linearRampToValueAtTime(0.6, now+dt+0.01);
+        g.gain.setValueAtTime(0.6, now+dt+0.16);
+        g.gain.linearRampToValueAtTime(0, now+dt+0.21);
+        o.start(now+dt); o.stop(now+dt+0.22);
+      });
+    }).catch(() => {});
+  } catch(e) {}
 }
 
-async function startContinuousBeep() {
+function startContinuousBeep() {
   if (alarmInterval) return;
-  try {
-    if (!alarmCtx || alarmCtx.state === 'closed')
-      alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-    if (alarmCtx.state === 'suspended')
-      await alarmCtx.resume().catch(() => {});
-    _scheduleBeep();
-    alarmInterval = setInterval(_scheduleBeep, 2200);
-  } catch(e) {}
+  _playBeep();
+  alarmInterval = setInterval(_playBeep, 2200);
 }
 
 function stopContinuousBeep() {
