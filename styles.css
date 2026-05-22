@@ -398,6 +398,44 @@ body {
 }
 .auth-error { color: #f87171; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
 .auth-note { color: rgba(255,255,255,0.30); font-size: 13px; line-height: 1.5; }
+.auth-input-docker {
+  width: 100%; padding: 14px 16px; margin-bottom: 12px; box-sizing: border-box;
+  background: rgba(255,255,255,0.08); border: 1.5px solid rgba(255,255,255,0.18);
+  border-radius: 12px; color: #fff; font-size: 16px; font-family: inherit;
+  outline: none; -webkit-appearance: none;
+}
+.auth-input-docker:focus { border-color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.12); }
+.auth-input-docker::placeholder { color: rgba(255,255,255,0.35); }
+.btn-docker-login-pwa {
+  width: 100%; padding: 15px; margin-bottom: 0;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border: none; border-radius: 12px;
+  font-size: 16px; font-weight: 700; color: #fff;
+  cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-docker-secondary-pwa {
+  width: 100%; padding: 14px;
+  background: transparent; border: 1.5px solid rgba(255,255,255,0.25); border-radius: 12px;
+  font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.85);
+  cursor: pointer; font-family: inherit; margin-bottom: 6px;
+  -webkit-tap-highlight-color: transparent;
+}
+.btn-docker-pwa {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%; padding: 14px 16px; margin-bottom: 12px;
+  background: transparent; border: 1.5px solid rgba(255,255,255,0.22); border-radius: 12px;
+  font-size: 15px; font-weight: 600; color: #fff;
+  cursor: pointer; font-family: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+.auth-divider-docker {
+  display: flex; align-items: center; gap: 10px; margin: 14px 0 12px;
+}
+.auth-divider-docker::before, .auth-divider-docker::after {
+  content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.15);
+}
+.auth-divider-docker span { color: rgba(255,255,255,0.4); font-size: 13px; white-space: nowrap; }
 
 /* ── Header actions ── */
 .header-actions { display: flex; align-items: center; gap: 5px; flex-shrink: 0; }
@@ -407,6 +445,13 @@ body {
   -webkit-tap-highlight-color: transparent; line-height: 1;
 }
 .btn-header-active { background: rgba(99,102,241,0.5) !important; border-color: rgba(99,102,241,0.8) !important; }
+.close-btn {
+  background: rgba(239,68,68,0.25); border: 1px solid rgba(239,68,68,0.5);
+  border-radius: 7px; padding: 4px 8px; cursor: pointer; font-size: 13px;
+  color: #fca5a5; font-weight: 700; line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+.close-btn:hover { background: rgba(239,68,68,0.5); }
 
 /* ── User area (header) ── */
 .user-area { display: flex; align-items: center; gap: 5px; }

@@ -1,0 +1,11 @@
+node_modules
+ios
+android
+.git
+.github
+firebase.json
+supabase-config.js
+*.md
+Makefile
+scripts
+package-lock.json

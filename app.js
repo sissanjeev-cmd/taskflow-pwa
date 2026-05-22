@@ -36,8 +36,15 @@ let unsubSnapshot  = null;
 let pendingAlarms  = [];
 let alarmCtx       = null;
 let alarmInterval  = null;
-let wakeLock       = null;
-let isPinned       = false;
+
+// ── Docker API state ────────────────────────────────────────────────────────
+let dockerConfig    = null;   // { apiUrl, token, email, displayName } | null
+let useDocker       = false;
+let dockerSyncTimer = null;
+
+function _getDockerConfig()   { try { return JSON.parse(localStorage.getItem('taskflow-docker-config') || 'null'); } catch { return null; } }
+function _saveDockerConfig(c) { localStorage.setItem('taskflow-docker-config', JSON.stringify(c)); }
+function _clearDockerConfig() { localStorage.removeItem('taskflow-docker-config'); }
 
 const $   = id => document.getElementById(id);
 const app = document.getElementById('app');
@@ -59,8 +66,46 @@ document.addEventListener('touchstart', _initAudio, { passive: true });
 document.addEventListener('click',      _initAudio, { passive: true });
 
 // ── Entry ──────────────────────────────────────────────────────────────────
+// ── Background alarm sync to service worker ────────────────────────────────
+async function syncAlarmsToSW() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg.active) return;
+    const now = new Date();
+    const alarms = tasks
+      .filter(t => !t.completed && t.reminderEnabled && t.dueDate && !t.alarmTriggered)
+      .map(t => ({
+        id:          t.id,
+        title:       t.title,
+        description: t.description || '',
+        dueAt:       new Date(t.dueDate + (t.dueTime ? 'T'+t.dueTime : 'T00:00')).toISOString(),
+      }))
+      .filter(a => new Date(a.dueAt) > now);
+    reg.active.postMessage({ type: 'SCHEDULE_ALARMS', alarms });
+  } catch(_) {}
+}
+
 async function init() {
+  // Docker mode — takes priority over Firebase and local storage
+  const docCfg = _getDockerConfig();
+  if (docCfg?.token) {
+    dockerConfig = docCfg;
+    useDocker = true;
+    currentUser = { email: dockerConfig.email, displayName: dockerConfig.displayName || '' };
+    try { tasks = await apiCall('GET', '/api/tasks'); }
+    catch(e) { tasks = []; showToast('Cannot reach Docker API'); }
+    tasks.forEach(t => { if (t.alarmTriggered&&!t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    buildApp(); startAlarmChecker(); startDockerSync();
+    return;
+  }
+
   if ('serviceWorker' in navigator) {
+    // Request notification permission for background alarms
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+
     // When a new SW takes over, reload immediately to get fresh files
     navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload());
     navigator.serviceWorker.register('./sw.js').then(reg => {
@@ -116,7 +161,7 @@ async function init() {
   });
 }
 
-function persistLocal() { localStorage.setItem('taskflow-tasks', JSON.stringify(tasks)); }
+function persistLocal() { localStorage.setItem('taskflow-tasks', JSON.stringify(tasks)); syncAlarmsToSW(); }
 
 // ── Auth screen ────────────────────────────────────────────────────────────
 const googleSvg = `<svg width="20" height="20" viewBox="0 0 18 18" fill="none">
@@ -138,6 +183,8 @@ function showAuthScreen() {
         </button>
         <p class="auth-error" id="auth-err"></p>
         <p class="auth-note">Sign in to sync tasks across iPhone &amp; Mac</p>
+        <div class="auth-divider-docker"><span>or</span></div>
+        <button class="btn-docker-pwa" id="btn-docker-setup">🐳 Use self-hosted Docker</button>
       </div>
     </div>`;
 
@@ -159,6 +206,7 @@ function showAuthScreen() {
       }
     }
   });
+  $('btn-docker-setup').addEventListener('click', showDockerSetup);
 }
 
 // ── Firestore data ─────────────────────────────────────────────────────────
@@ -173,6 +221,7 @@ function startRealtimeSync() {
     tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
     render();
+    syncAlarmsToSW();
   });
 }
 
@@ -182,7 +231,12 @@ function stopRealtimeSync() {
 
 // ── CRUD ───────────────────────────────────────────────────────────────────
 async function saveTask(t) {
-  if (useLocal) {
+  if (useDocker) {
+    const idx = tasks.findIndex(x => x.id === t.id);
+    if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
+    render();
+    try { await apiCall('POST', '/api/tasks/' + t.id, t); } catch(e) { showToast('Sync error'); }
+  } else if (useLocal) {
     const idx = tasks.findIndex(x => x.id === t.id);
     if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
     persistLocal(); render();
@@ -193,7 +247,10 @@ async function saveTask(t) {
 }
 
 async function removeTask(id) {
-  if (useLocal) {
+  if (useDocker) {
+    tasks = tasks.filter(x => x.id !== id); render();
+    try { await apiCall('DELETE', '/api/tasks/' + id); } catch(e) { showToast('Sync error'); }
+  } else if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {
     await deleteDoc(doc(tasksCol(), id));
@@ -201,11 +258,123 @@ async function removeTask(id) {
 }
 
 async function clearCompleted() {
-  if (useLocal) {
+  if (useDocker) {
+    tasks = tasks.filter(t => !t.completed); render();
+    try { await apiCall('DELETE', '/api/tasks?completed=true'); } catch(e) { showToast('Sync error'); }
+  } else if (useLocal) {
     tasks = tasks.filter(t => !t.completed); persistLocal(); render();
   } else {
     tasks.filter(t => t.completed).forEach(t => deleteDoc(doc(tasksCol(), t.id)));
   }
+}
+
+// ── Docker API helpers ──────────────────────────────────────────────────────
+function showDockerSetup() {
+  app.innerHTML = `
+    <div id="auth-screen">
+      <div class="auth-card">
+        <span class="auth-logo">🐳</span>
+        <h1 class="auth-title" style="font-size:28px">Docker Setup</h1>
+        <p class="auth-sub" style="font-size:15px;margin-bottom:20px">Connect to your self-hosted TaskFlow database</p>
+        <input class="auth-input-docker" id="docker-url" placeholder="API URL (http://localhost:3001)" value="http://localhost:3001" />
+        <input class="auth-input-docker" id="docker-email" placeholder="Email" type="email" autocomplete="email" />
+        <input class="auth-input-docker" id="docker-pass" placeholder="Password" type="password" autocomplete="current-password" />
+        <button class="btn-docker-login-pwa" id="btn-docker-login">Sign In</button>
+        <div class="auth-divider-docker"><span>new here?</span></div>
+        <button class="btn-docker-secondary-pwa" id="btn-docker-register">Create Account</button>
+        <p class="auth-error" id="docker-err"></p>
+        <button class="btn-docker-pwa" id="btn-docker-back" style="margin-top:8px">← Back</button>
+      </div>
+    </div>`;
+  $('btn-docker-back').addEventListener('click', showAuthScreen);
+  $('btn-docker-login').addEventListener('click', () => {
+    const url = ($('docker-url').value.trim() || 'http://localhost:3001').replace(/\/$/, '');
+    dockerSignIn(url, $('docker-email').value.trim(), $('docker-pass').value);
+  });
+  $('btn-docker-register').addEventListener('click', () => {
+    const url = ($('docker-url').value.trim() || 'http://localhost:3001').replace(/\/$/, '');
+    dockerRegister(url, $('docker-email').value.trim(), $('docker-pass').value);
+  });
+}
+
+async function apiCall(method, path, body) {
+  const res = await fetch(dockerConfig.apiUrl + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + dockerConfig.token },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) { dockerSignOut(); throw new Error('Session expired'); }
+  if (!res.ok) { const t = await res.text(); throw new Error(t); }
+  return res.json();
+}
+
+async function dockerSignIn(apiUrl, email, password) {
+  const errEl = $('docker-err');
+  if (errEl) errEl.textContent = 'Signing in…';
+  try {
+    const res = await fetch(apiUrl + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Sign-in failed'; return; }
+    dockerConfig = { apiUrl, token: data.token, email: data.email, displayName: data.displayName || '' };
+    _saveDockerConfig(dockerConfig);
+    useDocker = true;
+    currentUser = { email: data.email, displayName: data.displayName || '' };
+    tasks = await apiCall('GET', '/api/tasks');
+    tasks.forEach(t => { if (t.alarmTriggered&&!t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    buildApp(); startAlarmChecker(); startDockerSync();
+    showToast('🐳 Signed in to Docker');
+  } catch (e) { if (errEl) errEl.textContent = 'Cannot connect: ' + e.message; }
+}
+
+async function dockerRegister(apiUrl, email, password) {
+  const errEl = $('docker-err');
+  if (errEl) errEl.textContent = 'Creating account…';
+  try {
+    const res = await fetch(apiUrl + '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Registration failed'; return; }
+    dockerConfig = { apiUrl, token: data.token, email: data.email, displayName: data.displayName || '' };
+    _saveDockerConfig(dockerConfig);
+    useDocker = true;
+    currentUser = { email: data.email, displayName: data.displayName || '' };
+    tasks = [];
+    buildApp(); startAlarmChecker(); startDockerSync();
+    showToast('🐳 Account created — welcome!');
+  } catch (e) { if (errEl) errEl.textContent = 'Cannot connect: ' + e.message; }
+}
+
+function dockerSignOut() {
+  if (dockerSyncTimer) { clearInterval(dockerSyncTimer); dockerSyncTimer = null; }
+  useDocker = false; dockerConfig = null; currentUser = null; tasks = [];
+  _clearDockerConfig();
+  showAuthScreen();
+}
+
+function startDockerSync() {
+  if (dockerSyncTimer) clearInterval(dockerSyncTimer);
+  dockerSyncTimer = setInterval(async () => {
+    if (!useDocker || !dockerConfig?.token) return;
+    try {
+      tasks = await apiCall('GET', '/api/tasks');
+      tasks.forEach(t => { if (t.alarmTriggered&&!t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+      render();
+    } catch(_) {}
+  }, 30000);
+}
+
+function showToast(msg) {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:rgba(255,107,53,0.92);color:#fff;padding:9px 20px;border-radius:22px;font-size:14px;font-weight:600;z-index:9999;white-space:nowrap;backdrop-filter:blur(10px);box-shadow:0 4px 20px rgba(0,0,0,0.4);';
+  el.textContent = msg; document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2400);
 }
 
 // ── Alarm checker ──────────────────────────────────────────────────────────
@@ -369,13 +538,11 @@ function buildApp() {
         </div>
       </div>
       <div class="header-actions">
-        <button class="btn-header-icon ${isPinned?'btn-header-active':''}" id="btn-pin-pwa" title="Keep screen on">📌</button>
-        <button class="btn-header-icon" id="btn-min-pwa" title="Minimise">🪟</button>
-        <button class="btn-header-icon" id="btn-export-pwa" title="Export tasks">📤</button>
         ${av ? `<div class="user-area">
           <div class="user-avatar" title="${escHtml(u.displayName||u.email||'')}">${av}</div>
           <button class="btn-signout" id="btn-signout">Sign out</button>
         </div>` : `<button class="btn-google-signin btn-signin-small" id="btn-signin-header">Sign In</button>`}
+        <button class="ctrl-btn close-btn" id="btn-close-pwa" title="Close TaskFlow">✕</button>
       </div>
     </div>
     <div id="add-bar">
@@ -429,30 +596,8 @@ function buildApp() {
       </div>
     </div>`;
 
-  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
-
-  if ($('btn-pin-pwa')) $('btn-pin-pwa').addEventListener('click', async () => {
-    if (!isPinned) {
-      try {
-        wakeLock = await navigator.wakeLock?.request('screen');
-        isPinned = true;
-        $('btn-pin-pwa').classList.add('btn-header-active');
-      } catch(e) {}
-    } else {
-      wakeLock?.release(); wakeLock = null; isPinned = false;
-      $('btn-pin-pwa').classList.remove('btn-header-active');
-    }
-  });
-
-  if ($('btn-min-pwa')) $('btn-min-pwa').addEventListener('click', () => window.blur());
-
-  if ($('btn-export-pwa')) $('btn-export-pwa').addEventListener('click', () => {
-    const json = JSON.stringify(tasks, null, 2);
-    const a = document.createElement('a');
-    a.href = 'data:application/json,' + encodeURIComponent(json);
-    a.download = 'taskflow-export.json';
-    a.click();
-  });
+  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => useDocker ? dockerSignOut() : signOut(auth));
+  if ($('btn-close-pwa')) $('btn-close-pwa').addEventListener('click', () => window.close());
   if ($('btn-signin-header')) $('btn-signin-header').addEventListener('click', async () => {
     if (!auth) { showAuthScreen(); return; }
     await setPersistence(auth, browserLocalPersistence).catch(() => {});

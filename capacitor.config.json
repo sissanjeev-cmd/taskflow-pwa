@@ -1,0 +1,21 @@
+{
+  "appId": "com.taskflow.pwa",
+  "appName": "TaskFlow",
+  "webDir": "www",
+  "ios": {
+    "backgroundColor": "#0a0a14",
+    "allowsLinkPreview": false,
+    "scrollEnabled": false,
+    "contentInset": "always"
+  },
+  "server": {
+    "allowNavigation": ["*"]
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 0,
+      "backgroundColor": "#0a0a14",
+      "showSpinner": false
+    }
+  }
+}

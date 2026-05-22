@@ -1,8 +1,9 @@
 export const firebaseConfig = {
-  apiKey:            "AIzaSyBY-WmP2AlhbWYp2ZKkUEtL4EWD8eg5I8c",
-  authDomain:        "tasksreminders-9e7a8.firebaseapp.com",
-  projectId:         "tasksreminders-9e7a8",
-  storageBucket:     "tasksreminders-9e7a8.firebasestorage.app",
-  messagingSenderId: "593931374306",
-  appId:             "1:593931374306:web:b4c73694e5dbfc2cead8bb"
+  apiKey: "AIzaSyCPY2iYtS-6DD49ngW_c28qA8BCu7PK2lE",
+  authDomain: "taskflow-pwa-e49c9.firebaseapp.com",
+  projectId: "taskflow-pwa-e49c9",
+  storageBucket: "taskflow-pwa-e49c9.firebasestorage.app",
+  messagingSenderId: "448730096429",
+  appId: "1:448730096429:web:005ffb51db75d612c0a9a4",
+  measurementId: "G-ZEQW181B63"
 };

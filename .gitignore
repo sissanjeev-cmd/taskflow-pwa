@@ -1,0 +1,8 @@
+node_modules/
+.DS_Store
+.firebase/
+www/
+ios/App/Pods/
+ios/App/App/public/
+ios/App/build/
+android/
