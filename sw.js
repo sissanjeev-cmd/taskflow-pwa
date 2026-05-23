@@ -1,4 +1,4 @@
-const CACHE  = 'taskflow-v18';
+const CACHE  = 'taskflow-v19';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 // ── In-memory timer map (taskId → timerId) ─────────────────────────────────

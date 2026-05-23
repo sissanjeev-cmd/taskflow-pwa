@@ -64,15 +64,6 @@ let alarmCtx = null;
 let alarmInterval = null;
 let mobileAudioNode = null;
 
-// ── Docker API state ────────────────────────────────────────────────────────
-let dockerConfig = null;
-let useDocker = false;
-let dockerSyncTimer = null;
-
-function _getDockerConfig() { try { return JSON.parse(localStorage.getItem('taskflow-docker-config') || 'null'); } catch { return null; } }
-function _saveDockerConfig(c) { localStorage.setItem('taskflow-docker-config', JSON.stringify(c)); }
-function _clearDockerConfig() { localStorage.removeItem('taskflow-docker-config'); }
-
 const $ = id => document.getElementById(id);
 const app = document.getElementById('app');
 
@@ -136,18 +127,6 @@ async function init() {
   window.addEventListener('error', function (e) {
     alert("Runtime Error: " + e.message + " at " + e.filename + ":" + e.lineno);
   });
-
-  const docCfg = _getDockerConfig();
-  if (docCfg?.token) {
-    dockerConfig = docCfg;
-    useDocker = true;
-    currentUser = { email: dockerConfig.email, displayName: dockerConfig.displayName || '' };
-    try { tasks = await apiCall('GET', '/api/tasks'); }
-    catch (e) { tasks = []; showToast('Cannot reach Docker API'); }
-    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
-    buildApp(); startAlarmChecker(); startDockerSync();
-    return;
-  }
 
   if ('serviceWorker' in navigator) {
     if ('Notification' in window && Notification.permission === 'default') {
@@ -230,8 +209,6 @@ function showAuthScreen(initialError = '') {
         <p class="auth-sub">Your tasks, everywhere</p>
         <button class="btn-google-signin" id="btn-signin">${googleSvg} Continue with Google</button>
         <p class="auth-error" id="auth-err">${escHtml(initialError)}</p>
-        <div class="auth-divider-docker"><span>or</span></div>
-        <button class="btn-docker-pwa" id="btn-docker-setup">🐳 Use self-hosted Docker</button>
       </div>
     </div>`;
 
@@ -267,7 +244,6 @@ function showAuthScreen(initialError = '') {
       }
     });
   });
-  $('btn-docker-setup').addEventListener('click', showDockerSetup);
 }
 
 function tasksCol() { return collection(db, 'users', currentUser.uid, 'tasks'); }
@@ -285,12 +261,7 @@ function startRealtimeSync() {
 function stopRealtimeSync() { if (unsubSnapshot) { unsubSnapshot(); unsubSnapshot = null; } }
 
 async function saveTask(t) {
-  if (useDocker) {
-    const idx = tasks.findIndex(x => x.id === t.id);
-    if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
-    render();
-    try { await apiCall('POST', '/api/tasks/' + t.id, t); } catch (e) { showToast('Sync error'); }
-  } else if (useLocal) {
+  if (useLocal) {
     const idx = tasks.findIndex(x => x.id === t.id);
     if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
     persistLocal(); render();
@@ -301,10 +272,7 @@ async function saveTask(t) {
 }
 
 async function removeTask(id) {
-  if (useDocker) {
-    tasks = tasks.filter(x => x.id !== id); render();
-    try { await apiCall('DELETE', '/api/tasks/' + id); } catch (e) { showToast('Sync error'); }
-  } else if (useLocal) {
+  if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {
     await deleteDoc(doc(tasksCol(), id));
@@ -312,109 +280,11 @@ async function removeTask(id) {
 }
 
 async function clearCompleted() {
-  if (useDocker) {
-    tasks = tasks.filter(t => !t.completed); render();
-    try { await apiCall('DELETE', '/api/tasks?completed=true'); } catch (e) { showToast('Sync error'); }
-  } else if (useLocal) {
+  if (useLocal) {
     tasks = tasks.filter(t => !t.completed); persistLocal(); render();
   } else {
     tasks.filter(t => t.completed).forEach(t => deleteDoc(doc(tasksCol(), t.id)));
   }
-}
-
-// ── Docker Setup ───────────────────────────────────────────────────────────
-function showDockerSetup() {
-  app.innerHTML = `
-    <div id="auth-screen">
-      <div class="auth-card">
-        <span class="auth-logo">🐳</span>
-        <h1 class="auth-title" style="font-size:28px">Docker Setup</h1>
-        <input class="auth-input-docker" id="docker-url" placeholder="API URL (http://localhost:3001)" value="http://localhost:3001" />
-        <input class="auth-input-docker" id="docker-email" placeholder="Email" type="email" />
-        <input class="auth-input-docker" id="docker-pass" placeholder="Password" type="password" />
-        <button class="btn-docker-login-pwa" id="btn-docker-login">Sign In</button>
-        <div class="auth-divider-docker"><span>new here?</span></div>
-        <button class="btn-docker-secondary-pwa" id="btn-docker-register">Create Account</button>
-        <p class="auth-error" id="docker-err"></p>
-        <button class="btn-docker-pwa" id="btn-docker-back" style="margin-top:8px">← Back</button>
-      </div>
-    </div>`;
-  $('btn-docker-back').addEventListener('click', showAuthScreen);
-  $('btn-docker-login').addEventListener('click', () => {
-    const url = ($('docker-url').value.trim() || 'http://localhost:3001').replace(/\/$/, '');
-    dockerSignIn(url, $('docker-email').value.trim(), $('docker-pass').value);
-  });
-  $('btn-docker-register').addEventListener('click', () => {
-    const url = ($('docker-url').value.trim() || 'http://localhost:3001').replace(/\/$/, '');
-    dockerRegister(url, $('docker-email').value.trim(), $('docker-pass').value);
-  });
-}
-
-async function apiCall(method, path, body) {
-  const res = await fetch(dockerConfig.apiUrl + path, {
-    method,
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + dockerConfig.token },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (res.status === 401) { dockerSignOut(); throw new Error('Session expired'); }
-  if (!res.ok) { const t = await res.text(); throw new Error(t); }
-  return res.json();
-}
-
-async function dockerSignIn(apiUrl, email, password) {
-  const errEl = $('docker-err'); if (errEl) errEl.textContent = 'Signing in…';
-  try {
-    const res = await fetch(apiUrl + '/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Sign-in failed'; return; }
-    dockerConfig = { apiUrl, token: data.token, email: data.email, displayName: data.displayName || '' };
-    _saveDockerConfig(dockerConfig); useDocker = true;
-    currentUser = { email: data.email, displayName: data.displayName || '' };
-    tasks = await apiCall('GET', '/api/tasks');
-    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
-    buildApp(); startAlarmChecker(); startDockerSync();
-    showToast('🐳 Connected to Docker');
-  } catch (e) { if (errEl) errEl.textContent = 'Connection failed: ' + e.message; }
-}
-
-async function dockerRegister(apiUrl, email, password) {
-  const errEl = $('docker-err'); if (errEl) errEl.textContent = 'Registering…';
-  try {
-    const res = await fetch(apiUrl + '/api/auth/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    const data = await res.json();
-    if (!res.ok) { if (errEl) errEl.textContent = data.error || 'Registration failed'; return; }
-    dockerConfig = { apiUrl, token: data.token, email: data.email, displayName: data.displayName || '' };
-    _saveDockerConfig(dockerConfig); useDocker = true;
-    currentUser = { email: data.email, displayName: data.displayName || '' }; tasks = [];
-    buildApp(); startAlarmChecker(); startDockerSync();
-    showToast('🐳 Account configured!');
-  } catch (e) { if (errEl) errEl.textContent = 'Connection failed: ' + e.message; }
-}
-
-function dockerSignOut() {
-  if (dockerSyncTimer) { clearInterval(dockerSyncTimer); dockerSyncTimer = null; }
-  useDocker = false; dockerConfig = null; currentUser = null; tasks = [];
-  _clearDockerConfig(); showAuthScreen();
-}
-
-function startDockerSync() {
-  if (dockerSyncTimer) clearInterval(dockerSyncTimer);
-  dockerSyncTimer = setInterval(async () => {
-    if (!useDocker || !dockerConfig?.token) return;
-    try {
-      tasks = await apiCall('GET', '/api/tasks');
-      tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
-      render();
-    } catch (_) { }
-  }, 30000);
 }
 
 function showToast(msg) {
@@ -730,14 +600,14 @@ function buildApp() {
     if (delId) { removeTask(delId); return; }
   };
 
-  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => useDocker ? dockerSignOut() : signOut(auth));
+  if ($('btn-signout')) $('btn-signout').addEventListener('click', () => signOut(auth));
   $('btn-add-full').addEventListener('click', () => openModal(null));
   $('search-input').addEventListener('input', e => { search = e.target.value; render(); });
 
   $('quick-input').onkeydown = e => {
     if (e.key === 'Enter' && e.target.value.trim()) {
       const nt = {
-        id: useDocker ? Math.floor(Math.random() * 1000000).toString() : (useLocal ? 'local_' + Date.now() : doc(tasksCol()).id),
+        id: useLocal ? 'local_' + Date.now() : doc(tasksCol()).id,
         title: e.target.value.trim(), completed: false, priority: 'medium', reminderEnabled: true,
         createdAt: new Date().toISOString(), color: nextColor(), alarmTriggered: false
       };
@@ -782,7 +652,7 @@ function buildApp() {
       if (!t.reminderEnabled || t.completed) { blinkingIds.delete(t.id); alarmFiredIds.delete(t.id); }
     } else {
       t = {
-        id: useDocker ? Math.floor(Math.random() * 1000000).toString() : (useLocal ? 'local_' + Date.now() : doc(tasksCol()).id),
+        id: useLocal ? 'local_' + Date.now() : doc(tasksCol()).id,
         title: val, description: $('m-desc').value.trim(), dueDate: $('m-date').value, dueTime: $('m-time').value,
         priority: modalPriority, reminderEnabled: modalReminder, completed: false,
         createdAt: new Date().toISOString(), color: nextColor(), alarmTriggered: false
