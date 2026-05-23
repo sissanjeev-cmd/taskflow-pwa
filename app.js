@@ -296,7 +296,7 @@ async function saveTask(t) {
     persistLocal(); render();
   } else {
     const { id, ...data } = t;
-    await setDoc(doc(tasksCol(), id), data);
+    try { await setDoc(doc(tasksCol(), id), data); } catch (e) { showToast('Sync error — changes not saved'); }
   }
 }
 
@@ -466,7 +466,7 @@ function startAlarmChecker() {
 }
 
 function fireAlarm(t) {
-  if (Notification.permission === 'granted') {
+  if ('Notification' in window && Notification.permission === 'granted') {
     new Notification('⏰ TaskFlow Reminder', {
       body: t.title,
       icon: './icon-192.png',
@@ -522,9 +522,11 @@ function showAlarmOverlay() {
   if (t.priority) metaHtml += `<span class="alarm-meta-prio alarm-prio-${t.priority}">${prioIcon[t.priority] || ''} ${t.priority}</span>`;
   if (t.dueDate) {
     const due = parseLocalDueDateTime(t.dueDate, t.dueTime);
-    const dateStr = due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const timeStr = t.dueTime ? due.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
-    metaHtml += `<span class="alarm-meta-due">🕐 ${[dateStr, timeStr].filter(Boolean).join(' · ')}</span>`;
+    if (due) {
+      const dateStr = due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const timeStr = t.dueTime ? due.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '';
+      metaHtml += `<span class="alarm-meta-due">🕐 ${[dateStr, timeStr].filter(Boolean).join(' · ')}</span>`;
+    }
   }
 
   const ov = document.createElement('div');
@@ -571,7 +573,7 @@ function getStats() {
     overdue: tasks.filter(t => {
       if (t.completed || !t.dueDate) return false;
       const localDue = parseLocalDueDateTime(t.dueDate, t.dueTime);
-      return localDue && localDue.getTime() < now;
+      return localDue && localDue.getTime() <= now;
     }).length
   };
 }
@@ -586,7 +588,7 @@ function getFiltered() {
     if (filter === 'overdue') {
       if (t.completed || !t.dueDate) return false;
       const localDue = parseLocalDueDateTime(t.dueDate, t.dueTime);
-      return localDue && localDue.getTime() < now;
+      return localDue && localDue.getTime() <= now;
     }
     return true;
   });
@@ -600,8 +602,8 @@ function formatDue(dueDate, dueTime) {
 
   return {
     label: [due.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), dueTime ? due.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''].filter(Boolean).join(' · '),
-    isOverdue: due.getTime() < now,
-    isSoon: due.getTime() >= now && (due.getTime() - now) / 3600000 < 24
+    isOverdue: due.getTime() <= now,
+    isSoon: due.getTime() > now && (due.getTime() - now) / 3600000 < 24
   };
 }
 
@@ -794,6 +796,8 @@ function buildApp() {
   render();
 }
 
+let lastRenderKey = '';
+
 function render() {
   if (!$('stat-total')) return;
   const s = getStats();
@@ -802,11 +806,17 @@ function render() {
 
   const filtered = getFiltered();
   $('bottom-count').textContent = filtered.length + ' task' + (filtered.length !== 1 ? 's' : '');
+
+  const renderKey = filtered.map(t => `${t.id}:${t.completed}:${t.title}:${t.dueDate || ''}:${t.dueTime || ''}:${t.priority}:${t.color || ''}:${blinkingIds.has(t.id)}`).join('|') + `|f:${filter}|s:${search}`;
+
   const list = $('task-list');
   if (!filtered.length) {
     list.innerHTML = `<div class="empty-state">No tasks to show.</div>`;
+    lastRenderKey = renderKey;
     return;
   }
+  if (renderKey === lastRenderKey) return;
+  lastRenderKey = renderKey;
   list.innerHTML = filtered.map(renderCard).join('');
 }
 
