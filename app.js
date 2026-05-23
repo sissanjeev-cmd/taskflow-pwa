@@ -344,6 +344,16 @@ function fireAlarm(t) {
   pendingAlarms.push(t.id);
   startContinuousBeep();
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
+  // If AudioContext is still blocked (no user gesture yet — e.g. just logged in via redirect),
+  // unlock audio on the very next interaction anywhere on the page.
+  if (!alarmCtx || alarmCtx.state !== 'running') {
+    const unlock = () => {
+      _initAudio();
+      if (alarmCtx?.state === 'suspended') alarmCtx.resume().catch(() => {});
+    };
+    document.addEventListener('touchstart', unlock, { once: true, capture: true, passive: true });
+    document.addEventListener('click', unlock, { once: true, capture: true });
+  }
 }
 
 function startContinuousBeep() {
