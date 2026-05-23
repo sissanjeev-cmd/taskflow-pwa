@@ -231,6 +231,7 @@ function showAuthScreen(initialError = '') {
 
     signInWithPopup(auth, provider).then(() => {
       errEl.textContent = '';
+      if (alarmCtx && alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
     }).catch(e => {
       if (e.code === 'auth/popup-blocked') {
         errEl.textContent = 'Popup blocked. Redirecting to Google…';
@@ -341,11 +342,22 @@ function fireAlarm(t) {
       requireInteraction: true
     });
   }
+  // Trigger OS-level notification sound via SW — plays automatically without a user gesture
+  // on iOS 16.4+ home-screen PWA.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(reg => {
+      if (reg.active) reg.active.postMessage({
+        type: 'FIRE_NOTIFICATION',
+        taskId: t.id,
+        title: t.title,
+        description: t.description || '',
+      });
+    }).catch(() => {});
+  }
   pendingAlarms.push(t.id);
   startContinuousBeep();
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
-  // If AudioContext is still blocked (no user gesture yet — e.g. just logged in via redirect),
-  // unlock audio on the very next interaction anywhere on the page.
+  // If AudioContext is still blocked (no user gesture yet), unlock on next interaction.
   if (!alarmCtx || alarmCtx.state !== 'running') {
     const unlock = () => {
       _initAudio();
@@ -419,7 +431,6 @@ function showAlarmOverlay() {
         <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
         <button class="alarm-btn alarm-stop"   id="alarm-stop">🛑 Stop Alarm</button>
       </div>
-      ${(!alarmCtx || alarmCtx.state !== 'running') ? '<p class="alarm-tap-hint">🔔 Tap anywhere to enable sound</p>' : ''}
     </div>`;
   document.getElementById('app').appendChild(ov);
 

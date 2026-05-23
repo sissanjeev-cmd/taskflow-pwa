@@ -1,4 +1,4 @@
-const CACHE  = 'taskflow-v21';
+const CACHE  = 'taskflow-v22';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 // ── In-memory timer map (taskId → timerId) ─────────────────────────────────
@@ -86,6 +86,18 @@ self.addEventListener('message', e => {
     // Persist to IDB so alarms survive SW restarts
     persistAlarms(alarms).catch(() => {});
     alarms.forEach(a => scheduleAlarm(a));
+  }
+
+  if (e.data?.type === 'FIRE_NOTIFICATION') {
+    self.registration.showNotification('⏰ TaskFlow', {
+      body: e.data.title + (e.data.description ? '\n' + e.data.description : ''),
+      icon:  './icon-192.png',
+      badge: './icon-192.png',
+      tag:   `tf-alarm-${e.data.taskId}`,
+      requireInteraction: true,
+      vibrate: [300, 100, 300, 100, 300],
+      data:  { url: self.location.origin },
+    }).catch(() => {});
   }
 });
 

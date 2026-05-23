@@ -52,7 +52,6 @@ body {
 .alarm-btn:active { transform: scale(0.97); }
 .alarm-snooze { background: #6366f1; color: #fff; }
 .alarm-stop   { background: #ef4444; color: #fff; }
-.alarm-tap-hint { color: rgba(255,255,255,0.45); font-size: 13px; margin-top: 10px; text-align: center; animation: pulse 1.5s ease-in-out infinite; }
 
 /* ── Title bar ── */
 #titlebar {
