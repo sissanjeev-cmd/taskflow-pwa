@@ -180,6 +180,7 @@ async function init() {
     try {
       currentUser = user;
       if (user) {
+        if (alarmCtx && alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
         buildApp();
         startRealtimeSync();
         startAlarmChecker();
@@ -215,6 +216,7 @@ function showAuthScreen(initialError = '') {
   // Plain (non-async) handler — keeps the call synchronous with the user gesture.
   // Any await before signInWithPopup breaks iOS Safari's gesture chain and blocks the popup.
   $('btn-signin').addEventListener('click', () => {
+    _initAudio();
     const errEl = $('auth-err');
     errEl.textContent = 'Opening Google sign-in…';
     const provider = new GoogleAuthProvider();
@@ -231,7 +233,6 @@ function showAuthScreen(initialError = '') {
 
     signInWithPopup(auth, provider).then(() => {
       errEl.textContent = '';
-      if (alarmCtx && alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
     }).catch(e => {
       if (e.code === 'auth/popup-blocked') {
         errEl.textContent = 'Popup blocked. Redirecting to Google…';
