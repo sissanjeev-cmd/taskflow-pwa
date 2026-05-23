@@ -419,6 +419,7 @@ function showAlarmOverlay() {
         <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
         <button class="alarm-btn alarm-stop"   id="alarm-stop">🛑 Stop Alarm</button>
       </div>
+      ${(!alarmCtx || alarmCtx.state !== 'running') ? '<p class="alarm-tap-hint">🔔 Tap anywhere to enable sound</p>' : ''}
     </div>`;
   document.getElementById('app').appendChild(ov);
 
@@ -429,7 +430,7 @@ function showAlarmOverlay() {
       const p = n => n.toString().padStart(2, '0');
       const dd = `${at.getFullYear()}-${p(at.getMonth() + 1)}-${p(at.getDate())}`;
       const dt = `${p(at.getHours())}:${p(at.getMinutes())}`;
-      blinkingIds.delete(taskId); alarmFiredIds.delete(taskId);
+      alarmFiredIds.delete(taskId);
       saveTask({ ...task, dueDate: dd, dueTime: dt, alarmTriggered: false });
     }
     ov.remove(); showAlarmOverlay();
@@ -704,7 +705,7 @@ function render() {
 
 function renderCard(t) {
   const due = t.dueDate ? formatDue(t.dueDate, t.dueTime) : null, isB = blinkingIds.has(t.id);
-  let dC = due ? (due.isOverdue ? 'overdue' : due.isSoon ? 'soon' : '') : '';
+  let dC = due ? ((due.isOverdue || isB) ? 'overdue' : due.isSoon ? 'soon' : '') : '';
   const col = t.color || '#a0a8c0', [r, g, b] = hexToRgb(col);
   return `
     <div class="task-card ${t.completed ? 'completed' : ''} ${isB ? 'blinking' : ''}" style="background:rgba(${r},${g},${b},0.38);border:2px solid rgba(${r},${g},${b},0.90);">
@@ -712,7 +713,7 @@ function renderCard(t) {
         <div class="checkbox ${t.completed ? 'checked' : ''}" data-toggle="${t.id}"></div>
         <div class="card-content">
           <div class="card-title">${escHtml(t.title)}</div>
-          ${due ? `<span class="due-label ${dC}">🕐 ${due.label}${due.isOverdue && !t.completed ? ' <span class="badge badge-overdue">Overdue</span>' : ''}${due.isSoon && !due.isOverdue && !t.completed ? ' <span class="badge badge-soon">Soon</span>' : ''}</span>` : ''}
+          ${due ? `<span class="due-label ${dC}">🕐 ${due.label}${(due.isOverdue || isB) && !t.completed ? ' <span class="badge badge-overdue">Overdue</span>' : ''}${due.isSoon && !(due.isOverdue || isB) && !t.completed ? ' <span class="badge badge-soon">Soon</span>' : ''}</span>` : ''}
         </div>
         <div class="card-actions-overlay">
            <button class="btn-edit-card" data-edit="${t.id}">✏️</button>
