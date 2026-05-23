@@ -456,9 +456,7 @@ function startAlarmChecker() {
       }
     });
 
-    if (stateChanged) {
-      render();
-    }
+    render();
   };
 
   check();
@@ -807,7 +805,11 @@ function render() {
   const filtered = getFiltered();
   $('bottom-count').textContent = filtered.length + ' task' + (filtered.length !== 1 ? 's' : '');
 
-  const renderKey = filtered.map(t => `${t.id}:${t.completed}:${t.title}:${t.dueDate || ''}:${t.dueTime || ''}:${t.priority}:${t.color || ''}:${blinkingIds.has(t.id)}`).join('|') + `|f:${filter}|s:${search}`;
+  const renderKey = filtered.map(t => {
+    const due = t.dueDate ? formatDue(t.dueDate, t.dueTime) : null;
+    const dueState = due ? (due.isOverdue ? 'O' : due.isSoon ? 'S' : 'N') : '';
+    return `${t.id}:${t.completed}:${t.title}:${t.dueDate || ''}:${t.dueTime || ''}:${t.priority}:${t.color || ''}:${blinkingIds.has(t.id)}:${dueState}`;
+  }).join('|') + `|f:${filter}|s:${search}`;
 
   const list = $('task-list');
   if (!filtered.length) {
