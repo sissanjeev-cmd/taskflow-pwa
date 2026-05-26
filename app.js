@@ -152,9 +152,17 @@ async function init() {
     let changed = false;
     tasks = tasks.map(t => { if (!t.color) { changed = true; return { ...t, color: nextColor() }; } return t; });
     if (changed) persistLocal();
-    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    tasks.forEach(t => {
+      if (t.alarmTriggered && !t.completed) {
+        blinkingIds.add(t.id);
+        if (!alarmFiredIds.has(t.id)) { alarmFiredIds.add(t.id); pendingAlarms.push(t.id); }
+      }
+    });
     buildApp();
     startAlarmChecker();
+    if (pendingAlarms.length > 0 && !document.getElementById('alarm-overlay')) {
+      showAlarmOverlay(); startContinuousBeep(); _scheduleAlarmAudioUnlock();
+    }
     return;
   }
 
@@ -255,7 +263,15 @@ function startRealtimeSync() {
   const q = query(tasksCol(), orderBy('createdAt', 'desc'));
   unsubSnapshot = onSnapshot(q, snap => {
     tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    tasks.forEach(t => { if (t.alarmTriggered && !t.completed) { blinkingIds.add(t.id); alarmFiredIds.add(t.id); } });
+    tasks.forEach(t => {
+      if (t.alarmTriggered && !t.completed) {
+        blinkingIds.add(t.id);
+        if (!alarmFiredIds.has(t.id)) { alarmFiredIds.add(t.id); pendingAlarms.push(t.id); }
+      }
+    });
+    if (pendingAlarms.length > 0 && !document.getElementById('alarm-overlay')) {
+      showAlarmOverlay(); startContinuousBeep(); _scheduleAlarmAudioUnlock();
+    }
     render();
     syncAlarmsToSW();
   });
@@ -358,15 +374,7 @@ function fireAlarm(t) {
   pendingAlarms.push(t.id);
   startContinuousBeep();
   if (!document.getElementById('alarm-overlay')) showAlarmOverlay();
-  // If AudioContext is still blocked (no user gesture yet), unlock on next interaction.
-  if (!alarmCtx || alarmCtx.state !== 'running') {
-    const unlock = () => {
-      _initAudio();
-      if (alarmCtx?.state === 'suspended') alarmCtx.resume().catch(() => {});
-    };
-    document.addEventListener('touchstart', unlock, { once: true, capture: true, passive: true });
-    document.addEventListener('click', unlock, { once: true, capture: true });
-  }
+  _scheduleAlarmAudioUnlock();
 }
 
 function startContinuousBeep() {
@@ -398,9 +406,25 @@ function stopContinuousBeep() {
 }
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && alarmCtx && alarmCtx.state === 'suspended')
-    alarmCtx.resume().catch(() => { });
+  if (!document.hidden) {
+    if (alarmCtx && alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => {});
+    if (document.getElementById('alarm-overlay')) {
+      if (!mobileAudioNode) startContinuousBeep();
+      _scheduleAlarmAudioUnlock();
+    }
+  }
 });
+
+function _scheduleAlarmAudioUnlock() {
+  if (alarmCtx && alarmCtx.state === 'running') return;
+  const unlock = () => {
+    if (!alarmCtx || alarmCtx.state === 'closed') _initAudio();
+    if (alarmCtx?.state === 'suspended') alarmCtx.resume().catch(() => {});
+    if (!mobileAudioNode) startContinuousBeep();
+  };
+  document.addEventListener('touchstart', unlock, { once: true, capture: true, passive: true });
+  document.addEventListener('click', unlock, { once: true, capture: true });
+}
 
 function showAlarmOverlay() {
   const taskId = pendingAlarms.shift();
