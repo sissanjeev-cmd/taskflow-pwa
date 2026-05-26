@@ -17,6 +17,9 @@
 </head>
 <body>
   <div id="app"></div>
+  <!-- Capacitor bridge + local-notifications plugin (no-op in browser, native in iOS app) -->
+  <script src="./capacitor-core.js"></script>
+  <script src="./capacitor-local-notifications.js"></script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

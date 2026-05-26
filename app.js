@@ -67,6 +67,71 @@ let mobileAudioNode = null;
 const $ = id => document.getElementById(id);
 const app = document.getElementById('app');
 
+// ── Native local notifications (Capacitor iOS) ────────────────────────────
+// Available when built as a native app via `make ios`. No-op in the browser.
+const _LN = window.capacitorLocalNotifications?.LocalNotifications || null;
+const _isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+
+function _notifId(taskId) {
+  // LocalNotifications requires a 32-bit integer ID
+  let h = 0;
+  for (let i = 0; i < taskId.length; i++) h = (Math.imul(31, h) + taskId.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 2_000_000_000) + 1;
+}
+
+async function scheduleNativeAlarm(task) {
+  if (!_LN || !_isNative) return;
+  if (!task.reminderEnabled || task.completed || !task.dueDate) return;
+  const at = parseLocalDueDateTime(task.dueDate, task.dueTime);
+  if (!at || at <= new Date()) return;
+  try {
+    await _LN.cancel({ notifications: [{ id: _notifId(task.id) }] });
+    await _LN.schedule({
+      notifications: [{
+        id: _notifId(task.id),
+        title: '⏰ TaskFlow',
+        body: task.title + (task.description ? ' — ' + task.description : ''),
+        schedule: { at },
+        sound: 'default',
+        extra: { taskId: task.id },
+      }]
+    });
+  } catch (e) {}
+}
+
+async function cancelNativeAlarm(taskId) {
+  if (!_LN || !_isNative) return;
+  try { await _LN.cancel({ notifications: [{ id: _notifId(taskId) }] }); } catch (e) {}
+}
+
+async function initNativeNotifications() {
+  if (!_LN || !_isNative) return;
+  try {
+    const perm = await _LN.requestPermissions();
+    if (perm.display !== 'granted') return;
+  } catch (e) { return; }
+
+  // When the app is open and a notification fires: show in-app overlay
+  _LN.addListener('localNotificationReceived', notif => {
+    const taskId = notif.extra?.taskId;
+    if (!taskId) return;
+    const t = tasks.find(x => x.id === taskId);
+    if (t && !alarmFiredIds.has(taskId)) { alarmFiredIds.add(taskId); blinkingIds.add(taskId); fireAlarm(t); }
+  });
+
+  // When user taps lock-screen / notification-centre notification → show overlay
+  _LN.addListener('localNotificationActionPerformed', action => {
+    const taskId = action.notification?.extra?.taskId;
+    if (!taskId) return;
+    const t = tasks.find(x => x.id === taskId);
+    if (t && !pendingAlarms.includes(taskId)) {
+      if (!alarmFiredIds.has(taskId)) { alarmFiredIds.add(taskId); blinkingIds.add(taskId); }
+      pendingAlarms.push(taskId);
+      if (!document.getElementById('alarm-overlay')) { showAlarmOverlay(); startContinuousBeep(); }
+    }
+  });
+}
+
 // Robust local date parser avoiding web engine timezone evaluation pitfalls
 function parseLocalDueDateTime(dateStr, timeStr) {
   if (!dateStr) return null;
@@ -192,6 +257,7 @@ async function init() {
         buildApp();
         startRealtimeSync();
         startAlarmChecker();
+        initNativeNotifications();
       } else {
         stopRealtimeSync();
         tasks = [];
@@ -279,6 +345,8 @@ function startRealtimeSync() {
 function stopRealtimeSync() { if (unsubSnapshot) { unsubSnapshot(); unsubSnapshot = null; } }
 
 async function saveTask(t) {
+  if (t.completed || !t.reminderEnabled) cancelNativeAlarm(t.id);
+  else scheduleNativeAlarm(t);
   if (useLocal) {
     const idx = tasks.findIndex(x => x.id === t.id);
     if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
@@ -290,6 +358,7 @@ async function saveTask(t) {
 }
 
 async function removeTask(id) {
+  cancelNativeAlarm(id);
   if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {
@@ -495,6 +564,7 @@ function showAlarmOverlay() {
 
   document.getElementById('alarm-stop').onclick = () => {
     const task = tasks.find(x => x.id === taskId);
+    cancelNativeAlarm(taskId);
     if (task) { blinkingIds.delete(taskId); saveTask({ ...task, alarmTriggered: true }); }
     ov.remove(); showAlarmOverlay();
   };
