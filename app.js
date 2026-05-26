@@ -415,11 +415,31 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+function _playBeepNow() {
+  if (!alarmCtx) return;
+  try {
+    const t = alarmCtx.currentTime + 0.05;
+    const osc = alarmCtx.createOscillator();
+    const gain = alarmCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, t);
+    osc.frequency.setValueAtTime(660, t + 0.15);
+    gain.gain.setValueAtTime(0.8, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    osc.connect(gain);
+    gain.connect(alarmCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.75);
+  } catch (e) {}
+}
+
 function _scheduleAlarmAudioUnlock() {
   if (alarmCtx && alarmCtx.state === 'running') return;
   const unlock = () => {
+    document.getElementById('alarm-sound-hint')?.remove();
     if (!alarmCtx || alarmCtx.state === 'closed') _initAudio();
     if (alarmCtx?.state === 'suspended') alarmCtx.resume().catch(() => {});
+    _playBeepNow();
     if (!mobileAudioNode) startContinuousBeep();
   };
   document.addEventListener('touchstart', unlock, { once: true, capture: true, passive: true });
@@ -452,6 +472,7 @@ function showAlarmOverlay() {
       <div class="alarm-heading">Time's Up!</div>
       <div class="alarm-task-name">${escHtml(t.title)}</div>
       ${t.description ? `<div class="alarm-task-desc">${escHtml(t.description)}</div>` : ''}
+      <div id="alarm-sound-hint" style="text-align:center;font-size:13px;color:rgba(255,255,255,0.55);margin:4px 0 8px;letter-spacing:0.01em;">🔊 Tap anywhere for alarm sound</div>
       <div class="alarm-actions">
         <button class="alarm-btn alarm-snooze" id="alarm-snooze">😴 Snooze 5 min</button>
         <button class="alarm-btn alarm-stop"   id="alarm-stop">🛑 Stop Alarm</button>
