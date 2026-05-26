@@ -17,6 +17,7 @@ cp "$ROOT/icon-180.png"      "$WWW/"
 cp "$ROOT/icon-192.png"      "$WWW/"
 cp "$ROOT/icon-512.png"      "$WWW/"
 cp "$ROOT/icon.png"          "$WWW/"
+cp "$ROOT/push-config.js"   "$WWW/"
 
 cp "$ROOT/node_modules/@capacitor/core/dist/capacitor.js"                   "$WWW/capacitor-core.js" 2>/dev/null || true
 cp "$ROOT/node_modules/@capacitor/local-notifications/dist/plugin.js"        "$WWW/capacitor-local-notifications.js" 2>/dev/null || true

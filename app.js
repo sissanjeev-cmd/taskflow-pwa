@@ -10,6 +10,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import { collection, deleteDoc, doc, getFirestore, onSnapshot, orderBy, query, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { PUSH_SERVER_URL, VAPID_PUBLIC_KEY } from './push-config.js';
 
 // ── Firebase init ──────────────────────────────────────────────────────────
 const isConfigured = !firebaseConfig.apiKey.startsWith('REPLACE');
@@ -165,6 +166,55 @@ function escHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ── Web Push (PWA browser path — not used in native Capacitor build) ─────
+function _urlB64ToUint8(base64) {
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function subscribeToPush() {
+  if (_isNative || !PUSH_SERVER_URL || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: _urlB64ToUint8(VAPID_PUBLIC_KEY),
+      });
+    }
+    await fetch(`${PUSH_SERVER_URL}/api/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: currentUser.uid, subscription: sub.toJSON() }),
+    });
+  } catch (e) { console.warn('[push] subscribe failed', e.message); }
+}
+
+async function writeAlarmSchedule(task) {
+  if (_isNative || !PUSH_SERVER_URL || !db || !currentUser) return;
+  if (!task.reminderEnabled || task.completed || task.alarmTriggered || !task.dueDate) return;
+  const dueAt = parseLocalDueDateTime(task.dueDate, task.dueTime);
+  if (!dueAt || dueAt <= new Date()) return;
+  try {
+    await setDoc(doc(db, 'scheduledAlarms', `${currentUser.uid}_${task.id}`), {
+      userId: currentUser.uid,
+      taskId: task.id,
+      title: task.title,
+      description: task.description || '',
+      dueAt,
+      sent: false,
+    });
+  } catch (e) {}
+}
+
+async function cancelAlarmSchedule(taskId) {
+  if (_isNative || !db || !currentUser) return;
+  try { await deleteDoc(doc(db, 'scheduledAlarms', `${currentUser.uid}_${taskId}`)); } catch (e) {}
+}
+
 // ── Background Alarm Registration Delivery ────────────────────────────────
 async function syncAlarmsToSW() {
   if (!('serviceWorker' in navigator)) return;
@@ -258,6 +308,7 @@ async function init() {
         startRealtimeSync();
         startAlarmChecker();
         initNativeNotifications();
+        subscribeToPush();
       } else {
         stopRealtimeSync();
         tasks = [];
@@ -345,8 +396,13 @@ function startRealtimeSync() {
 function stopRealtimeSync() { if (unsubSnapshot) { unsubSnapshot(); unsubSnapshot = null; } }
 
 async function saveTask(t) {
-  if (t.completed || !t.reminderEnabled) cancelNativeAlarm(t.id);
-  else scheduleNativeAlarm(t);
+  if (_isNative) {
+    if (t.completed || !t.reminderEnabled) cancelNativeAlarm(t.id);
+    else scheduleNativeAlarm(t);
+  } else {
+    if (t.completed || !t.reminderEnabled || t.alarmTriggered) cancelAlarmSchedule(t.id);
+    else writeAlarmSchedule(t);
+  }
   if (useLocal) {
     const idx = tasks.findIndex(x => x.id === t.id);
     if (idx >= 0) tasks[idx] = t; else tasks.unshift(t);
@@ -358,7 +414,8 @@ async function saveTask(t) {
 }
 
 async function removeTask(id) {
-  cancelNativeAlarm(id);
+  if (_isNative) cancelNativeAlarm(id);
+  else cancelAlarmSchedule(id);
   if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {

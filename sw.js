@@ -1,4 +1,4 @@
-const CACHE  = 'taskflow-v23';
+const CACHE  = 'taskflow-v24';
 const ASSETS = ['./', './index.html', './app.js', './styles.css', './manifest.json', './firebase-config.js', './icon-192.png', './icon-512.png'];
 
 // ── In-memory timer map (taskId → timerId) ─────────────────────────────────
@@ -99,6 +99,22 @@ self.addEventListener('message', e => {
       data:  { url: self.location.origin },
     }).catch(() => {});
   }
+});
+
+// ── Web Push — fires when server sends a push (phone can be locked) ───────
+self.addEventListener('push', e => {
+  const data = e.data?.json() || {};
+  e.waitUntil(
+    self.registration.showNotification(data.title || '⏰ TaskFlow', {
+      body: data.body || 'A task is due!',
+      icon:  './icon-192.png',
+      badge: './icon-192.png',
+      tag:   `tf-alarm-${data.taskId || Date.now()}`,
+      requireInteraction: true,
+      vibrate: [300, 100, 300, 100, 300],
+      data:  { url: self.location.origin, taskId: data.taskId },
+    })
+  );
 });
 
 // ── Notification click — open / focus the app ─────────────────────────────
