@@ -16,7 +16,9 @@ function db() {
 }
 
 module.exports = async function handler(req, res) {
-  const secret = req.query.secret || req.headers['x-cron-secret'];
+  const authHeader = req.headers['authorization'] || '';
+  const secret = req.query.secret || req.headers['x-cron-secret'] ||
+    (authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '');
   if (secret !== process.env.CRON_SECRET) return res.status(401).json({ error: 'Unauthorized' });
 
   const firestore = db();

@@ -24,7 +24,7 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = window.navigator.standalone === true ||
   window.matchMedia('(display-mode: standalone)').matches;
-const useRedirectAuth = isStandalone; // browser Safari can use popup; only standalone PWA needs redirect
+const useRedirectAuth = false; // signInWithPopup works on iOS 16.4+ standalone; redirect breaks session in iOS PWA
 
 const REDIRECT_PENDING_KEY = 'taskflow-redirect-pending';
 
@@ -239,10 +239,6 @@ async function syncAlarmsToSW() {
 }
 
 async function init() {
-  window.addEventListener('error', function (e) {
-    alert("Runtime Error: " + e.message + " at " + e.filename + ":" + e.lineno);
-  });
-
   if ('serviceWorker' in navigator) {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => { });
@@ -281,23 +277,12 @@ async function init() {
     return;
   }
 
-  const isRedirectReturn = !!localStorage.getItem(REDIRECT_PENDING_KEY);
-  const loadingMsg = isRedirectReturn ? 'Completing sign-in…' : 'Loading…';
-  app.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:rgba(255,255,255,0.5);font-size:16px;">${loadingMsg}</div>`;
+  // Clear any stale redirect key from old redirect-based auth flow
+  localStorage.removeItem(REDIRECT_PENDING_KEY);
+  app.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:rgba(255,255,255,0.5);font-size:16px;">Loading…</div>`;
 
-  let redirectError = null;
-  if (isRedirectReturn) {
-    localStorage.removeItem(REDIRECT_PENDING_KEY);
-    try {
-      const result = await getRedirectResult(auth);
-      if (!result) redirectError = 'Sign-in was interrupted. Please try again.';
-    } catch (e) {
-      console.error('Redirect result:', e.code, e.message);
-      redirectError = _friendlyAuthError(e);
-    }
-  } else {
-    try { await getRedirectResult(auth); } catch (e) { console.error('Redirect result:', e); }
-  }
+  const redirectError = null;
+  try { await getRedirectResult(auth); } catch (e) { console.error('Redirect result:', e); }
 
   onAuthStateChanged(auth, async user => {
     try {
@@ -313,7 +298,6 @@ async function init() {
         stopRealtimeSync();
         tasks = [];
         showAuthScreen(redirectError || '');
-        redirectError = null;
       }
     } catch (e) {
       app.innerHTML = `<div style="padding:20px;text-align:center;color:#f87171;">Error: ${e.message}</div>`;
@@ -416,6 +400,11 @@ async function saveTask(t) {
 async function removeTask(id) {
   if (_isNative) cancelNativeAlarm(id);
   else cancelAlarmSchedule(id);
+  pendingAlarms = pendingAlarms.filter(x => x !== id);
+  alarmFiredIds.delete(id);
+  blinkingIds.delete(id);
+  const overlay = document.getElementById('alarm-overlay');
+  if (overlay) { overlay.remove(); showAlarmOverlay(); }
   if (useLocal) {
     tasks = tasks.filter(x => x.id !== id); persistLocal(); render();
   } else {
@@ -506,25 +495,37 @@ function fireAlarm(t) {
 function startContinuousBeep() {
   if (mobileAudioNode) return;
   if (!alarmCtx) alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-  if (alarmCtx.state === 'suspended') alarmCtx.resume().catch(() => { });
+  alarmCtx.resume().catch(() => {});
+
+  const compressor = alarmCtx.createDynamicsCompressor();
+  compressor.threshold.value = -6;
+  compressor.ratio.value = 4;
+  compressor.connect(alarmCtx.destination);
+
+  function _beep(freq, startTime, duration) {
+    const osc = alarmCtx.createOscillator();
+    const gain = alarmCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(freq, startTime);
+    gain.gain.setValueAtTime(0, startTime);
+    gain.gain.linearRampToValueAtTime(1.0, startTime + 0.02);
+    gain.gain.setValueAtTime(1.0, startTime + duration - 0.03);
+    gain.gain.linearRampToValueAtTime(0, startTime + duration);
+    osc.connect(gain);
+    gain.connect(compressor);
+    osc.start(startTime);
+    osc.stop(startTime + duration);
+  }
 
   mobileAudioNode = setInterval(() => {
-    if (navigator.vibrate) navigator.vibrate([300, 100, 300]);
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 200]);
+    if (!alarmCtx || alarmCtx.state !== 'running') return;
     try {
       const now = alarmCtx.currentTime;
-      const osc = alarmCtx.createOscillator();
-      const gain = alarmCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(880, now);
-      gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(0.7, now + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-      osc.connect(gain);
-      gain.connect(alarmCtx.destination);
-      osc.start(now);
-      osc.stop(now + 0.45);
+      _beep(987, now, 0.18);
+      _beep(1318, now + 0.22, 0.18);
     } catch (e) { }
-  }, 1500);
+  }, 900);
 }
 
 function stopContinuousBeep() {
@@ -544,30 +545,40 @@ document.addEventListener('visibilitychange', () => {
 function _playBeepNow() {
   if (!alarmCtx) return;
   try {
-    const t = alarmCtx.currentTime + 0.05;
-    const osc = alarmCtx.createOscillator();
-    const gain = alarmCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, t);
-    osc.frequency.setValueAtTime(660, t + 0.15);
-    gain.gain.setValueAtTime(0.8, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
-    osc.connect(gain);
-    gain.connect(alarmCtx.destination);
-    osc.start(t);
-    osc.stop(t + 0.75);
+    const comp = alarmCtx.createDynamicsCompressor();
+    comp.threshold.value = -6; comp.ratio.value = 4;
+    comp.connect(alarmCtx.destination);
+    const t = alarmCtx.currentTime + 0.02;
+    [[987, t], [1318, t + 0.22]].forEach(([freq, start]) => {
+      const osc = alarmCtx.createOscillator();
+      const gain = alarmCtx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(1.0, start + 0.02);
+      gain.gain.setValueAtTime(1.0, start + 0.15);
+      gain.gain.linearRampToValueAtTime(0, start + 0.18);
+      osc.connect(gain); gain.connect(comp);
+      osc.start(start); osc.stop(start + 0.2);
+    });
   } catch (e) {}
 }
 
 function _scheduleAlarmAudioUnlock() {
   if (alarmCtx && alarmCtx.state === 'running') return;
-  const unlock = () => {
+  function unlock() {
     document.getElementById('alarm-sound-hint')?.remove();
-    if (!alarmCtx || alarmCtx.state === 'closed') _initAudio();
-    if (alarmCtx?.state === 'suspended') alarmCtx.resume().catch(() => {});
-    _playBeepNow();
-    if (!mobileAudioNode) startContinuousBeep();
-  };
+    if (!alarmCtx || alarmCtx.state === 'closed') {
+      alarmCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    // Use .then() — iOS tracks the gesture token through promise microtasks;
+    // async/await can lose it across suspension points on older iOS versions.
+    alarmCtx.resume().then(() => {
+      _playBeepNow();
+      stopContinuousBeep();   // kill the stalled interval that was blocked on suspended ctx
+      startContinuousBeep();  // restart fresh now that ctx is running
+    }).catch(() => {});
+  }
   document.addEventListener('touchstart', unlock, { once: true, capture: true, passive: true });
   document.addEventListener('click', unlock, { once: true, capture: true });
 }
